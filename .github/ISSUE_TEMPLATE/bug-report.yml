@@ -1,0 +1,31 @@
+name: Bug Report
+description: Report an engine, arbiter, or arena bug.
+title: "[bug] <short summary>"
+labels: ["bug"]
+body:
+  - type: input
+    id: engine_version
+    attributes:
+      label: Engine version
+      description: Output of `np --version`.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Reproduction steps
+      description: Minimal reproduction. Include loadouts and seeds if combat-related.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+    validations:
+      required: true

@@ -1,0 +1,16 @@
+name: Meta / Balance Discussion
+description: Open a discussion on metagame trends, card balance, design principles.
+title: "[meta] <topic>"
+labels: ["meta", "discussion"]
+body:
+  - type: textarea
+    id: topic
+    attributes:
+      label: What's the discussion?
+    validations:
+      required: true
+  - type: textarea
+    id: data
+    attributes:
+      label: Data / observations
+      description: Match logs, ladder snapshots, anything quantitative.

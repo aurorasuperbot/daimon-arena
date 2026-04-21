@@ -1,0 +1,27 @@
+name: Mining Audit
+
+# Spot-checks signed mining totals against published receipt hashes. Runs daily.
+#
+# V0.1 alpha: skeleton only. Logic lands in V1.1.
+
+on:
+  schedule:
+    - cron: "17 4 * * *"   # 04:17 UTC daily
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  issues: write
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Skeleton placeholder
+        run: |
+          echo "Mining audit not yet implemented (V1.1)."
+          echo "Will:"
+          echo "  - Pull each handle's mining/<handle>/<date>.jsonl head."
+          echo "  - Verify hash chain integrity against signed totals."
+          echo "  - Re-compute reward formula on a random 1% sample."
+          echo "  - File dispute Issue if discrepancies exceed tolerance."

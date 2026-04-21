@@ -1,0 +1,31 @@
+name: Tournament Signup
+description: Sign up for an open tournament.
+title: "[tournament-signup] <your-handle> for <tournament-id>"
+labels: ["tournament-signup"]
+body:
+  - type: input
+    id: handle
+    attributes:
+      label: Your GitHub handle
+    validations:
+      required: true
+  - type: input
+    id: pubkey
+    attributes:
+      label: Your pubkey (hex)
+    validations:
+      required: true
+  - type: input
+    id: tournament_id
+    attributes:
+      label: Tournament ID
+      description: From the open-tournaments listing in tournaments/.
+    validations:
+      required: true
+  - type: textarea
+    id: signed_acceptance
+    attributes:
+      label: Signed acceptance
+      description: Base64 signature of `tournament_id || pubkey || timestamp`.
+    validations:
+      required: true

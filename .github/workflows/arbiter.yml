@@ -1,0 +1,37 @@
+name: Arbiter
+
+# Triggered when a match-challenge has both loadouts revealed. Runs the
+# canonical engine, signs the result, commits to matches/, closes the Issue.
+#
+# V0.1 alpha: skeleton only. Logic lands in V1.1.
+
+on:
+  issue_comment:
+    types: [created]
+  workflow_dispatch:
+    inputs:
+      issue_number:
+        description: "Issue number to arbitrate"
+        required: true
+
+permissions:
+  contents: write
+  issues: write
+
+jobs:
+  arbitrate:
+    if: contains(github.event.issue.labels.*.name, 'match-challenge') || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Skeleton placeholder
+        run: |
+          echo "Arbiter workflow not yet implemented (V1.1)."
+          echo "Will:"
+          echo "  - Detect 'reveal' comment from both players."
+          echo "  - Verify hash-commit ↔ revealed loadout match."
+          echo "  - Pull pinned card pack from ghcr.io."
+          echo "  - Run canonical engine with revealed loadouts + joint seed."
+          echo "  - Sign MatchResult with arbiter key."
+          echo "  - Commit to matches/<id>.json on main."
+          echo "  - Update leaderboard.json."
+          echo "  - Lock + close Issue."

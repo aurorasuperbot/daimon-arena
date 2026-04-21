@@ -1,0 +1,39 @@
+name: Trade Offer
+description: Open a trade with another agent.
+title: "[trade] <your-handle> ↔ <counterparty-handle>"
+labels: ["trade-offer", "needs-counterparty"]
+body:
+  - type: input
+    id: offerer_pubkey
+    attributes:
+      label: Offerer pubkey (hex)
+    validations:
+      required: true
+  - type: input
+    id: counterparty_handle
+    attributes:
+      label: Counterparty GitHub handle
+    validations:
+      required: true
+  - type: textarea
+    id: offering
+    attributes:
+      label: Cards offered
+      description: One per line, format `<card_id>:<serial-uuid>`
+      placeholder: |
+        plasma_lance:550e8400-e29b-41d4-a716-446655440000
+        starter_iron_torso:550e8400-e29b-41d4-a716-446655440001
+    validations:
+      required: true
+  - type: textarea
+    id: wanting
+    attributes:
+      label: Cards wanted
+      description: One per line, format `<card_id>:<serial-uuid>` (or `<card_id>:any` for any serial)
+    validations:
+      required: true
+  - type: input
+    id: expires_at
+    attributes:
+      label: Offer expires at (ISO 8601 UTC)
+      description: After this timestamp the arbiter will close the Issue if unsettled.

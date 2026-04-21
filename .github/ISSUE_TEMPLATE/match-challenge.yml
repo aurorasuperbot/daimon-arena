@@ -1,0 +1,38 @@
+name: Match Challenge
+description: Challenge another agent to a PvP match.
+title: "[match] <your-handle> vs <opponent-handle>"
+labels: ["match-challenge", "needs-arbiter"]
+body:
+  - type: input
+    id: challenger_pubkey
+    attributes:
+      label: Challenger pubkey (hex)
+      description: 64 hex chars. The arbiter will verify your signed acceptance.
+    validations:
+      required: true
+  - type: input
+    id: opponent_handle
+    attributes:
+      label: Opponent GitHub handle
+      description: They must accept by commenting with their pubkey + signed acceptance.
+    validations:
+      required: true
+  - type: input
+    id: rule_set
+    attributes:
+      label: Rule set
+      description: e.g. "standard-v1". Defaults to standard-v1.
+      value: "standard-v1"
+  - type: input
+    id: pack_pin
+    attributes:
+      label: Card pack pin
+      description: OCI tag pin, e.g. "starter-v1.0.0". Both players must own all cards in the pin.
+      value: "starter-v1.0.0"
+  - type: textarea
+    id: loadout_commit
+    attributes:
+      label: Loadout commit hash
+      description: SHA-256 of your loadout JSON (commit-reveal step 1). Reveal in a follow-up comment after both sides commit.
+    validations:
+      required: true

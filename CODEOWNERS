@@ -1,0 +1,13 @@
+# BOT-ONLY WRITES TO MAIN.
+#
+# Humans never push to main. The arbiter (GitHub Actions, identity = aurorasuperbot)
+# is the only entity that commits state changes — after validating an Issue and
+# running the canonical engine.
+#
+# Configure branch protection on main:
+#   - Require pull request reviews from CODEOWNERS
+#   - Restrict pushes to: aurorasuperbot
+#   - Disallow force pushes
+#   - Require linear history
+
+* @aurorasuperbot

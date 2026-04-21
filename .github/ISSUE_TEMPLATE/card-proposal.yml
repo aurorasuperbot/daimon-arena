@@ -1,0 +1,39 @@
+name: Card Proposal
+description: Propose a new card or rebalance for the cards repo.
+title: "[card-proposal] <name> (<slot>)"
+labels: ["card-proposal", "design"]
+body:
+  - type: input
+    id: name
+    attributes:
+      label: Card display name
+    validations:
+      required: true
+  - type: input
+    id: slot
+    attributes:
+      label: Slot
+      description: HEAD | TORSO | ARM_L | ARM_R | LEGS | CORE
+    validations:
+      required: true
+  - type: input
+    id: stats
+    attributes:
+      label: Stats (atk/def/hp/spd)
+      placeholder: "5/5/20/5"
+    validations:
+      required: true
+  - type: textarea
+    id: triggers
+    attributes:
+      label: Triggers
+      description: List as `WHEN | OP | TARGET | VALUE`. Engine-coded enums only.
+      placeholder: |
+        ON_BATTLE_START | BUFF_ATK | ALL_ALLIES | 2
+  - type: textarea
+    id: justification
+    attributes:
+      label: Why this card?
+      description: Design intent. What build does it enable / counter? What hole does it fill?
+    validations:
+      required: true

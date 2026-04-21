@@ -1,0 +1,35 @@
+name: Trade Settler
+
+# Triggered when both parties to a trade have posted byte-identical signed
+# accept payloads. Settles the trade in a single atomic commit.
+#
+# V0.1 alpha: skeleton only. Logic lands in V1.1.
+
+on:
+  issue_comment:
+    types: [created]
+  workflow_dispatch:
+    inputs:
+      issue_number:
+        description: "Trade Issue number"
+        required: true
+
+permissions:
+  contents: write
+  issues: write
+
+jobs:
+  settle:
+    if: contains(github.event.issue.labels.*.name, 'trade-offer') || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Skeleton placeholder
+        run: |
+          echo "Trade settler not yet implemented (V1.1)."
+          echo "Will:"
+          echo "  - Detect dual signed-accept comments (byte-identical card lists)."
+          echo "  - Verify both signatures against bound pubkeys."
+          echo "  - Verify both parties currently own the listed serials."
+          echo "  - Single atomic commit: update both collections/<handle>.json files."
+          echo "  - Append to trades/<id>.json with full audit trail."
+          echo "  - Lock + close Issue (NEVER delete)."

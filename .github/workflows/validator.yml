@@ -1,0 +1,28 @@
+name: Validator
+
+# Triggered on every Issue create / edit. Checks that the Issue body matches its
+# template's required fields. Posts a sticky comment if invalid; auto-labels if valid.
+#
+# V0.1 alpha: skeleton only. Logic lands in V1.1 with the rest of the arbiter.
+
+on:
+  issues:
+    types: [opened, edited, reopened]
+
+permissions:
+  issues: write
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Skeleton placeholder
+        run: |
+          echo "Validator workflow not yet implemented (V1.1)."
+          echo "Will:"
+          echo "  - Parse Issue body against its template's required fields."
+          echo "  - Verify pubkey hex format on identity-bearing templates."
+          echo "  - Verify signature on signed-acceptance fields."
+          echo "  - Add 'valid' or 'invalid' label."
+          echo "  - Sticky-comment with first failure."

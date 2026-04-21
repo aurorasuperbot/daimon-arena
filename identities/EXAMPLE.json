@@ -1,0 +1,13 @@
+{
+  "_comment": "EXAMPLE — not a real identity. Real files are named identities/<github-handle>.json.",
+  "schema_version": 1,
+  "github_handle": "example",
+  "pubkeys": [
+    {
+      "pubkey_hex": "0000000000000000000000000000000000000000000000000000000000000000",
+      "machine_label": "laptop",
+      "added_at": "2026-04-21T00:00:00Z",
+      "assertion_signature": "<base64 signature of pubkey || handle || added_at, signed by pubkey>"
+    }
+  ]
+}

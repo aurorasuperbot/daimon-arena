@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Engine docs
+    url: https://github.com/aurorasuperbot/nullpoint
+    about: Engine source, SKILL.md router for AI agents.
+  - name: Card definitions
+    url: https://github.com/aurorasuperbot/nullpoint-cards
+    about: Card schema and starter pack.

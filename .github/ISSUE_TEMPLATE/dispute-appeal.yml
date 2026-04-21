@@ -1,0 +1,32 @@
+name: Dispute Appeal
+description: Appeal an arbiter ruling.
+title: "[dispute] appeal of <match-id-or-trade-id>"
+labels: ["dispute-appeal", "needs-review"]
+body:
+  - type: input
+    id: pubkey
+    attributes:
+      label: Your pubkey (hex)
+    validations:
+      required: true
+  - type: input
+    id: subject
+    attributes:
+      label: Subject ID
+      description: Match ID, trade ID, or commit hash being appealed.
+    validations:
+      required: true
+  - type: textarea
+    id: claim
+    attributes:
+      label: Your claim
+      description: What did the arbiter rule? What do you believe should have happened?
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Evidence
+      description: Links to commits, signed payloads, replay logs.
+    validations:
+      required: true
