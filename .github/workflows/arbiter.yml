@@ -1,9 +1,23 @@
 name: Arbiter
 
-# Triggered when a match-challenge has both loadouts revealed. Runs the
-# canonical engine, signs the result, commits to matches/, closes the Issue.
+# Triggered when a match-challenge Issue receives a comment that completes the
+# commit-reveal protocol. Pulls comment bodies via the GH API, runs the canonical
+# engine in scripts/arbitrate.py, commits matches/<id>.json + leaderboard.json,
+# locks + closes the Issue.
 #
-# V0.1 alpha: skeleton only. Logic lands in V1.1.
+# State machine (drives this workflow):
+#   1. Issue opened from match-challenge template with `loadout_commit:` in body
+#   2. Opponent comments with `/accept` block (`opponent_pubkey:`, `loadout_commit:`)
+#   3. Each player posts a `/reveal` comment containing fenced JSON loadout +
+#      `nonce:` + `signature:`
+#   4. The 4th relevant comment (or 3rd, if both phases pass) triggers settlement.
+#
+# Cross-repo engine pull:
+#   The arbiter needs the `nullpoint` engine. Until v0.1.0 is on PyPI we install
+#   from the private engine repo using ENGINE_READ_TOKEN — a fine-grained PAT
+#   scoped to repo:read on aurorasuperbot/nullpoint. If the secret is absent the
+#   workflow falls back to running the SELF-TEST only (the script is still the
+#   single source of truth; the workflow is a thin wrapper).
 
 on:
   issue_comment:
@@ -20,18 +34,125 @@ permissions:
 
 jobs:
   arbitrate:
-    if: contains(github.event.issue.labels.*.name, 'match-challenge') || github.event_name == 'workflow_dispatch'
+    if: |
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.issue && contains(github.event.issue.labels.*.name, 'match-challenge'))
     runs-on: ubuntu-latest
     steps:
-      - name: Skeleton placeholder
+      - name: Checkout arena
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install nullpoint engine
+        id: install_engine
+        env:
+          ENGINE_READ_TOKEN: ${{ secrets.ENGINE_READ_TOKEN }}
         run: |
-          echo "Arbiter workflow not yet implemented (V1.1)."
-          echo "Will:"
-          echo "  - Detect 'reveal' comment from both players."
-          echo "  - Verify hash-commit ↔ revealed loadout match."
-          echo "  - Pull pinned card pack from ghcr.io."
-          echo "  - Run canonical engine with revealed loadouts + joint seed."
-          echo "  - Sign MatchResult with arbiter key."
-          echo "  - Commit to matches/<id>.json on main."
-          echo "  - Update leaderboard.json."
-          echo "  - Lock + close Issue."
+          if [ -z "$ENGINE_READ_TOKEN" ]; then
+            echo "engine_available=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::ENGINE_READ_TOKEN secret not set; arbiter will only self-test."
+            pip install cryptography
+          else
+            pip install "git+https://x-access-token:${ENGINE_READ_TOKEN}@github.com/aurorasuperbot/nullpoint.git@v0.1.0"
+            echo "engine_available=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Run arbiter self-test
+        # Always runs — proves the script is wired correctly, even if no real
+        # match has happened yet.
+        if: steps.install_engine.outputs.engine_available == 'true'
+        run: python scripts/arbitrate.py --self-test
+
+      - name: Determine issue number
+        id: issue
+        env:
+          ISSUE_INPUT: ${{ inputs.issue_number }}
+          EVENT_ISSUE: ${{ github.event.issue.number }}
+        run: |
+          NUM="${ISSUE_INPUT:-$EVENT_ISSUE}"
+          echo "number=$NUM" >> "$GITHUB_OUTPUT"
+
+      - name: Fetch Issue + comments
+        id: fetch
+        if: steps.install_engine.outputs.engine_available == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ISSUE_NUMBER: ${{ steps.issue.outputs.number }}
+        run: |
+          mkdir -p /tmp/arbiter
+          gh issue view "$ISSUE_NUMBER" --json body --jq .body > /tmp/arbiter/challenge.txt
+          gh api "repos/${{ github.repository }}/issues/$ISSUE_NUMBER/comments" \
+            --jq '.[] | "\(.id)\t\(.user.login)\t\(.body | gsub("\n"; "\\n"))"' \
+            > /tmp/arbiter/comments.tsv || true
+          # Find first /accept and split out reveals — naive parser, robust to comment ordering.
+          python <<'EOF'
+          from pathlib import Path
+          tsv = Path("/tmp/arbiter/comments.tsv").read_text() if Path("/tmp/arbiter/comments.tsv").exists() else ""
+          accept_body = ""
+          reveal_a_body = ""
+          reveal_b_body = ""
+          for line in tsv.splitlines():
+              parts = line.split("\t", 2)
+              if len(parts) < 3:
+                  continue
+              _, user, body = parts
+              body = body.replace("\\n", "\n")
+              low = body.strip().lower()
+              if not accept_body and low.startswith("/accept"):
+                  accept_body = body
+              elif "/reveal" in low and "nonce:" in low:
+                  if not reveal_a_body:
+                      reveal_a_body = body
+                  elif not reveal_b_body:
+                      reveal_b_body = body
+          Path("/tmp/arbiter/accept.txt").write_text(accept_body)
+          Path("/tmp/arbiter/reveal_a.txt").write_text(reveal_a_body)
+          Path("/tmp/arbiter/reveal_b.txt").write_text(reveal_b_body)
+          have_all = bool(accept_body and reveal_a_body and reveal_b_body)
+          print(f"::notice::accept={bool(accept_body)} reveal_a={bool(reveal_a_body)} reveal_b={bool(reveal_b_body)}")
+          Path("/tmp/arbiter/ready").write_text("1" if have_all else "0")
+          EOF
+          READY=$(cat /tmp/arbiter/ready)
+          echo "ready=$READY" >> "$GITHUB_OUTPUT"
+
+      - name: Arbitrate
+        if: steps.fetch.outputs.ready == '1'
+        env:
+          ISSUE_NUMBER: ${{ steps.issue.outputs.number }}
+        run: |
+          python scripts/arbitrate.py \
+            --issue-number "$ISSUE_NUMBER" \
+            --challenge-body /tmp/arbiter/challenge.txt \
+            --accept-body    /tmp/arbiter/accept.txt \
+            --reveal-a-body  /tmp/arbiter/reveal_a.txt \
+            --reveal-b-body  /tmp/arbiter/reveal_b.txt \
+            --arena-root     . \
+            > /tmp/arbiter/result.json
+
+      - name: Commit + close on success
+        if: steps.fetch.outputs.ready == '1'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ISSUE_NUMBER: ${{ steps.issue.outputs.number }}
+        run: |
+          git config user.name  "nullpoint-arbiter[bot]"
+          git config user.email "arbiter@aurorasuperbot.local"
+          git add matches/ leaderboard.json
+          if ! git diff --cached --quiet; then
+            git commit -m "arbiter: settle match #$ISSUE_NUMBER"
+            git push
+          fi
+          # Post outcome to Issue
+          if [ -f /tmp/arbiter/result.json ]; then
+            WINNER=$(jq -r .winner /tmp/arbiter/result.json)
+            REASON=$(jq -r .reason /tmp/arbiter/result.json)
+            HP_A=$(jq -r .side_a_final_hp /tmp/arbiter/result.json)
+            HP_B=$(jq -r .side_b_final_hp /tmp/arbiter/result.json)
+            gh issue comment "$ISSUE_NUMBER" --body "Arbitrated. winner=$WINNER reason=$REASON hp=$HP_A/$HP_B. See \`matches/$ISSUE_NUMBER.json\`."
+            gh issue lock "$ISSUE_NUMBER" --reason resolved || true
+            gh issue close "$ISSUE_NUMBER" --reason completed || true
+          fi
