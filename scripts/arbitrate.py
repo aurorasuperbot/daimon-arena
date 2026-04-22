@@ -22,7 +22,7 @@ Protocol (commit-reveal, signature-verified):
        signature:  <ed25519 signature, hex>
 
      Signature is over canonical bytes:
-       b"nullpoint-pvp-v1\n"
+       b"daimon-pvp-v1\n"
        + str(issue_number).encode()
        + b"\n"
        + canonical(loadout)
@@ -35,7 +35,7 @@ Protocol (commit-reveal, signature-verified):
      - Verify each player's commit hash matches sha256(canonical(loadout) || nonce)
      - Verify each player's signature
      - Derive joint seed:
-         sha256(b"nullpoint-pvp-seed-v1\n"
+         sha256(b"daimon-pvp-seed-v1\n"
                 + str(issue_number).encode() + b"\n"
                 + commit_a + b"\n" + commit_b + b"\n"
                 + nonce_a + b"\n" + nonce_b)
@@ -75,20 +75,20 @@ from dataclasses import dataclass, field, asdict
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
-# nullpoint engine import — provided by the workflow via pip install or sys.path.
-# In tests, we add the sibling nullpoint repo to sys.path before importing.
+# daimon engine import — provided by the workflow via pip install or sys.path.
+# In tests, we add the sibling daimon repo to sys.path before importing.
 try:
-    from nullpoint.cards import load_card_dict
-    from nullpoint.engine import Loadout, resolve_match
-    from nullpoint.identity import verify
+    from daimon.cards import load_card_dict
+    from daimon.engine import Loadout, resolve_match
+    from daimon.identity import verify
 except ImportError as e:
-    print(f"FATAL: nullpoint engine not importable: {e}", file=sys.stderr)
-    print("Install with: pip install nullpoint==<pinned-version>", file=sys.stderr)
+    print(f"FATAL: daimon engine not importable: {e}", file=sys.stderr)
+    print("Install with: pip install daimon==<pinned-version>", file=sys.stderr)
     sys.exit(127)
 
 
-PROTOCOL_VERSION = "nullpoint-pvp-v1"
-SEED_LABEL = "nullpoint-pvp-seed-v1"
+PROTOCOL_VERSION = "daimon-pvp-v1"
+SEED_LABEL = "daimon-pvp-seed-v1"
 
 
 # ---------------------------------------------------------------------------
@@ -406,7 +406,7 @@ def _read_text(path: Optional[str]) -> str:
 
 
 def main() -> int:
-    p = argparse.ArgumentParser(description="NULLPOINT PvP arbiter")
+    p = argparse.ArgumentParser(description="DAIMON PvP arbiter")
     p.add_argument("--issue-number", type=int)
     p.add_argument("--challenge-body")
     p.add_argument("--accept-body")

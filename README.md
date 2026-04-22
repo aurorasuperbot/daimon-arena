@@ -1,6 +1,6 @@
-# nullpoint-arena
+# daimon-arena
 
-Public state for [NULLPOINT](https://github.com/aurorasuperbot/nullpoint).
+Public state for [DAIMON](https://github.com/aurorasuperbot/daimon).
 
 > **This repo is bot-only-write.** Humans interact via Issues. The arbiter (GitHub Actions) validates and commits.
 

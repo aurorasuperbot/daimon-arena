@@ -1,7 +1,7 @@
 """Tests for the arbiter.
 
 Run from the arena repo root with:
-  PYTHONPATH=../nullpoint pytest scripts/test_arbitrate.py
+  PYTHONPATH=../daimon pytest scripts/test_arbitrate.py
 
 Or directly without pytest:
   python scripts/test_arbitrate.py

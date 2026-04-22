@@ -13,9 +13,9 @@ name: Arbiter
 #   4. The 4th relevant comment (or 3rd, if both phases pass) triggers settlement.
 #
 # Cross-repo engine pull:
-#   The arbiter needs the `nullpoint` engine. Until v0.1.0 is on PyPI we install
+#   The arbiter needs the `daimon` engine. Until v0.1.0 is on PyPI we install
 #   from the private engine repo using ENGINE_READ_TOKEN — a fine-grained PAT
-#   scoped to repo:read on aurorasuperbot/nullpoint. If the secret is absent the
+#   scoped to repo:read on aurorasuperbot/daimon. If the secret is absent the
 #   workflow falls back to running the SELF-TEST only (the script is still the
 #   single source of truth; the workflow is a thin wrapper).
 
@@ -47,7 +47,7 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Install nullpoint engine
+      - name: Install daimon engine
         id: install_engine
         env:
           ENGINE_READ_TOKEN: ${{ secrets.ENGINE_READ_TOKEN }}
@@ -57,7 +57,7 @@ jobs:
             echo "::warning::ENGINE_READ_TOKEN secret not set; arbiter will only self-test."
             pip install cryptography
           else
-            pip install "git+https://x-access-token:${ENGINE_READ_TOKEN}@github.com/aurorasuperbot/nullpoint.git@v0.1.0"
+            pip install "git+https://x-access-token:${ENGINE_READ_TOKEN}@github.com/aurorasuperbot/daimon.git@v0.1.0"
             echo "engine_available=true" >> "$GITHUB_OUTPUT"
           fi
 
@@ -139,7 +139,7 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           ISSUE_NUMBER: ${{ steps.issue.outputs.number }}
         run: |
-          git config user.name  "nullpoint-arbiter[bot]"
+          git config user.name  "daimon-arbiter[bot]"
           git config user.email "arbiter@aurorasuperbot.local"
           git add matches/ leaderboard.json
           if ! git diff --cached --quiet; then
