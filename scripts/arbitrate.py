@@ -17,9 +17,15 @@ Protocol (commit-reveal, signature-verified):
        loadout_commit:     <sha256 of canonical(loadout_b) || nonce_b>
 
   3. REVEAL: each player posts ONE comment starting with "/reveal" containing:
+       pubkey:     <hex of the revealing player>
        loadout:    {...full card list...}
        nonce:      <32-byte hex>
        signature:  <ed25519 signature, hex>
+
+     The arbiter matches each reveal to the correct side BY EMBEDDED PUBKEY,
+     not by comment order — so either side can reveal first without
+     breaking signature verification (a real-world race the GitHub event
+     order does not protect against).
 
      Signature is over canonical bytes:
        b"daimon-pvp-v1\n"
@@ -58,9 +64,13 @@ CI usage:
       --issue-number 42 \
       --challenge-body  challenge.txt \
       --accept-body     accept.txt \
-      --reveal-a-body   reveal_a.txt \
-      --reveal-b-body   reveal_b.txt \
+      --reveal-1-body   reveal_one.txt \
+      --reveal-2-body   reveal_two.txt \
       --arena-root      .
+
+  (--reveal-a-body / --reveal-b-body are accepted as legacy aliases for
+  --reveal-1-body / --reveal-2-body — the arbiter dispatches each reveal
+  to the correct side by embedded pubkey, so the labels are arbitrary.)
 """
 
 from __future__ import annotations
@@ -181,6 +191,10 @@ class Reveal:
     loadout: Any           # JSON object {"cards": [...]}
     nonce: str             # hex
     signature: str         # hex
+    pubkey: str = ""       # hex of the revealing player; required for matching
+                           # reveals to challenge/accept commits regardless
+                           # of comment order. Default empty for back-compat
+                           # with old fixtures, but parse_reveal enforces it.
 
 
 @dataclass
@@ -240,10 +254,13 @@ def parse_reveal(body: str) -> Reveal:
         raise ValueError("reveal missing fenced JSON loadout block")
     if "nonce" not in kv or "signature" not in kv:
         raise ValueError("reveal missing nonce or signature")
+    if "pubkey" not in kv:
+        raise ValueError("reveal missing pubkey (required for side-matching)")
     return Reveal(
         loadout=loadout,
         nonce=kv["nonce"].strip().lower(),
         signature=kv["signature"].strip().lower(),
+        pubkey=kv["pubkey"].strip().lower(),
     )
 
 
@@ -293,9 +310,18 @@ def arbitrate(
     issue_number: int,
     challenge_body: str,
     accept_body: str,
-    reveal_a_body: str,
-    reveal_b_body: str,
+    reveal_1_body: str,
+    reveal_2_body: str,
 ) -> ArbitrationResult:
+    """Resolve a PvP match.
+
+    The two reveal bodies may arrive in ANY order — the arbiter dispatches
+    each reveal to the correct side by matching the embedded ``pubkey:``
+    field against ``challenger_pubkey`` / ``opponent_pubkey``. This is the
+    only way to be safe under GitHub's lack of comment-arrival ordering
+    guarantees (responder could comment first if their workflow runs
+    faster than the challenger's).
+    """
     now = dt.datetime.now(dt.timezone.utc).isoformat()
     result = ArbitrationResult(
         ok=False, issue_number=issue_number, winner=None, reason="pending",
@@ -306,8 +332,8 @@ def arbitrate(
     try:
         challenge = parse_challenge(challenge_body)
         accept = parse_accept(accept_body)
-        reveal_a = parse_reveal(reveal_a_body)
-        reveal_b = parse_reveal(reveal_b_body)
+        reveal_1 = parse_reveal(reveal_1_body)
+        reveal_2 = parse_reveal(reveal_2_body)
     except ValueError as e:
         result.reason = "missing_data"
         result.errors.append(str(e))
@@ -316,14 +342,47 @@ def arbitrate(
     result.challenger_pubkey = challenge.challenger_pubkey
     result.opponent_pubkey = accept.opponent_pubkey
 
-    # Verify both phases
+    # Dispatch reveals by embedded pubkey (NOT by argument order).
+    challenger_reveal: Optional[Reveal] = None
+    opponent_reveal: Optional[Reveal] = None
+    for rev in (reveal_1, reveal_2):
+        if rev.pubkey == challenge.challenger_pubkey:
+            if challenger_reveal is not None:
+                result.reason = "cheat"
+                result.errors.append(
+                    "two reveals from the same pubkey (challenger side)")
+                return result
+            challenger_reveal = rev
+        elif rev.pubkey == accept.opponent_pubkey:
+            if opponent_reveal is not None:
+                result.reason = "cheat"
+                result.errors.append(
+                    "two reveals from the same pubkey (opponent side)")
+                return result
+            opponent_reveal = rev
+        else:
+            result.reason = "cheat"
+            result.errors.append(
+                f"reveal pubkey {rev.pubkey[:16]}… does not match "
+                f"challenger or opponent on this Issue")
+            return result
+
+    if challenger_reveal is None or opponent_reveal is None:
+        result.reason = "missing_data"
+        if challenger_reveal is None:
+            result.errors.append("missing challenger reveal")
+        if opponent_reveal is None:
+            result.errors.append("missing opponent reveal")
+        return result
+
+    # Verify both phases against the correctly-matched commits.
     errors_a = verify_phase(
         issue_number, challenge.challenger_pubkey, challenge.loadout_commit,
-        reveal_a, "side_a",
+        challenger_reveal, "side_a",
     )
     errors_b = verify_phase(
         issue_number, accept.opponent_pubkey, accept.loadout_commit,
-        reveal_b, "side_b",
+        opponent_reveal, "side_b",
     )
     result.errors.extend(errors_a + errors_b)
     if result.errors:
@@ -332,20 +391,22 @@ def arbitrate(
 
     # Build loadouts
     try:
-        lo_a = loadout_from_obj(reveal_a.loadout)
-        lo_b = loadout_from_obj(reveal_b.loadout)
+        lo_a = loadout_from_obj(challenger_reveal.loadout)
+        lo_b = loadout_from_obj(opponent_reveal.loadout)
     except (ValueError, TypeError) as e:
         result.reason = "invalid_loadout"
         result.errors.append(str(e))
         return result
 
-    # Derive joint seed (deterministic, neither side can grind)
+    # Derive joint seed (deterministic, neither side can grind).
+    # Note: nonces are bound to (challenger, opponent) sides — NOT to comment
+    # arrival order — so the seed is stable regardless of who reveals first.
     seed = derive_joint_seed(
         issue_number,
         challenge.loadout_commit,
         accept.loadout_commit,
-        reveal_a.nonce,
-        reveal_b.nonce,
+        challenger_reveal.nonce,
+        opponent_reveal.nonce,
     )
     result.seed_hex = seed.hex()
 
@@ -356,8 +417,8 @@ def arbitrate(
     result.side_a_final_hp = match.side_a_final_hp
     result.side_b_final_hp = match.side_b_final_hp
     result.round_count = len(match.rounds)
-    result.challenger_loadout = reveal_a.loadout
-    result.opponent_loadout = reveal_b.loadout
+    result.challenger_loadout = challenger_reveal.loadout
+    result.opponent_loadout = opponent_reveal.loadout
     result.ok = True
     return result
 
@@ -410,8 +471,13 @@ def main() -> int:
     p.add_argument("--issue-number", type=int)
     p.add_argument("--challenge-body")
     p.add_argument("--accept-body")
-    p.add_argument("--reveal-a-body")
-    p.add_argument("--reveal-b-body")
+    # Reveal labels are arbitrary — arbiter dispatches by embedded pubkey.
+    # Accept --reveal-a-body / --reveal-b-body as legacy aliases so the old
+    # workflow YAML still works during the transition.
+    p.add_argument("--reveal-1-body", "--reveal-a-body",
+                   dest="reveal_1_body")
+    p.add_argument("--reveal-2-body", "--reveal-b-body",
+                   dest="reveal_2_body")
     p.add_argument("--arena-root", default=".")
     p.add_argument("--self-test", action="store_true")
     p.add_argument("--no-write", action="store_true",
@@ -422,7 +488,7 @@ def main() -> int:
         return _self_test()
 
     if not all([args.issue_number, args.challenge_body, args.accept_body,
-                args.reveal_a_body, args.reveal_b_body]):
+                args.reveal_1_body, args.reveal_2_body]):
         print("error: all phase arguments required (or --self-test)", file=sys.stderr)
         return 2
 
@@ -430,8 +496,8 @@ def main() -> int:
         args.issue_number,
         _read_text(args.challenge_body),
         _read_text(args.accept_body),
-        _read_text(args.reveal_a_body),
-        _read_text(args.reveal_b_body),
+        _read_text(args.reveal_1_body),
+        _read_text(args.reveal_2_body),
     )
 
     print(json.dumps(result.to_record(), indent=2, sort_keys=True))
@@ -467,18 +533,21 @@ def _self_test() -> int:
     priv_a, pubkey_a = _make_id(0x11)
     priv_b, pubkey_b = _make_id(0x22)
 
-    def _filler(slot: str, suffix: str = "f"):
+    # V2 monster schema: cards have `species` + `element` (no `slot`).
+    _ELEMENTS = ["FIRE", "WATER", "NATURE", "VOLT", "VOID", "NORMAL"]
+
+    def _filler(position: int, suffix: str = "f"):
         return {
-            "card_id": f"filler_{slot.lower()}_{suffix}",
-            "slot": slot, "atk": 5, "def": 5, "hp": 20, "spd": 5, "triggers": [],
+            "card_id": f"filler_{position}_{suffix}",
+            "species": f"filler_species_{position}",
+            "element": _ELEMENTS[position],
+            "atk": 5, "def": 5, "hp": 20, "spd": 5, "triggers": [],
         }
 
-    loadout_a = {"cards": [_filler(s, "A") for s in
-                           ["HEAD", "TORSO", "ARM_L", "ARM_R", "LEGS", "CORE"]]}
-    loadout_b = {"cards": [_filler(s, "B") for s in
-                           ["HEAD", "TORSO", "ARM_L", "ARM_R", "LEGS", "CORE"]]}
+    loadout_a = {"cards": [_filler(i, "A") for i in range(6)]}
+    loadout_b = {"cards": [_filler(i, "B") for i in range(6)]}
     # Make B different so we get a deterministic winner
-    loadout_b["cards"][2]["atk"] = 12  # ARM_L crank
+    loadout_b["cards"][2]["atk"] = 12  # crank position-2 attack
 
     nonce_a = "11" * 32
     nonce_b = "22" * 32
@@ -498,14 +567,16 @@ loadout_commit: {commit_a}
     accept_body = f"""opponent_pubkey: {pubkey_b}
 loadout_commit: {commit_b}
 """
-    reveal_a_body = f"""nonce: {nonce_a}
+    reveal_a_body = f"""pubkey: {pubkey_a}
+nonce: {nonce_a}
 signature: {sig_a}
 
 ```json
 {json.dumps(loadout_a)}
 ```
 """
-    reveal_b_body = f"""nonce: {nonce_b}
+    reveal_b_body = f"""pubkey: {pubkey_b}
+nonce: {nonce_b}
 signature: {sig_b}
 
 ```json
@@ -522,10 +593,26 @@ signature: {sig_b}
           f"hp={result.side_a_final_hp}/{result.side_b_final_hp} "
           f"rounds={result.round_count}")
 
+    # Order-swap test: responder reveals first. With pubkey-based dispatch
+    # this should resolve identically to the canonical order.
+    result_swapped = arbitrate(issue, challenge_body, accept_body,
+                               reveal_b_body, reveal_a_body)
+    if not result_swapped.ok:
+        print(f"FAIL (order-swap): {result_swapped.errors}")
+        return 1
+    if (result_swapped.winner != result.winner
+            or result_swapped.seed_hex != result.seed_hex):
+        print(f"FAIL (order-swap): outcome diverged "
+              f"({result.winner} vs {result_swapped.winner}, "
+              f"seed {result.seed_hex[:16]}… vs {result_swapped.seed_hex[:16]}…)")
+        return 1
+    print("PASS: order-swap resolves identically (pubkey-based dispatch)")
+
     # Tamper test: flip a byte in the loadout, expect cheat detection
     tampered = json.loads(json.dumps(loadout_a))
     tampered["cards"][0]["atk"] = 99  # alter after committing
-    tampered_reveal = f"""nonce: {nonce_a}
+    tampered_reveal = f"""pubkey: {pubkey_a}
+nonce: {nonce_a}
 signature: {sig_a}
 
 ```json

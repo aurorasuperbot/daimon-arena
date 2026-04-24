@@ -52,16 +52,23 @@ def make_id(seed_byte: int):
     return priv, pub.hex()
 
 
-def filler(slot: str, suffix: str = "x"):
+# V2 monster schema: cards have `species` + `element` (no `slot`). Order in
+# the loadout's `cards` list IS the battle position, so we just use position
+# in the species name to keep it unique.
+_ELEMENTS = ["FIRE", "WATER", "NATURE", "VOLT", "VOID", "NORMAL"]
+
+
+def filler(position: int, suffix: str = "x"):
     return {
-        "card_id": f"filler_{slot.lower()}_{suffix}",
-        "slot": slot, "atk": 5, "def": 5, "hp": 20, "spd": 5, "triggers": [],
+        "card_id": f"filler_{position}_{suffix}",
+        "species": f"filler_species_{position}",
+        "element": _ELEMENTS[position],
+        "atk": 5, "def": 5, "hp": 20, "spd": 5, "triggers": [],
     }
 
 
 def full_loadout(suffix: str = "x"):
-    return {"cards": [filler(s, suffix) for s in
-                      ["HEAD", "TORSO", "ARM_L", "ARM_R", "LEGS", "CORE"]]}
+    return {"cards": [filler(i, suffix) for i in range(6)]}
 
 
 def make_protocol_set(issue: int = 100):
@@ -86,8 +93,12 @@ def make_protocol_set(issue: int = 100):
         f"loadout_commit: {commit_a}\n"
     )
     accept = f"opponent_pubkey: {pub_b}\nloadout_commit: {commit_b}\n"
-    reveal_a = f"nonce: {nonce_a}\nsignature: {sig_a}\n\n```json\n{json.dumps(lo_a)}\n```\n"
-    reveal_b = f"nonce: {nonce_b}\nsignature: {sig_b}\n\n```json\n{json.dumps(lo_b)}\n```\n"
+    # Reveals carry the revealing player's pubkey so the arbiter can match
+    # them to the right side regardless of comment arrival order.
+    reveal_a = (f"pubkey: {pub_a}\nnonce: {nonce_a}\nsignature: {sig_a}\n\n"
+                f"```json\n{json.dumps(lo_a)}\n```\n")
+    reveal_b = (f"pubkey: {pub_b}\nnonce: {nonce_b}\nsignature: {sig_b}\n\n"
+                f"```json\n{json.dumps(lo_b)}\n```\n")
 
     return {
         "issue": issue,
@@ -138,15 +149,24 @@ class TestParsing(unittest.TestCase):
             parse_challenge(body)
 
     def test_parse_reveal_complete(self):
-        body = ("nonce: aabb\nsignature: 1122\n\n"
+        body = ("pubkey: deadbeef\nnonce: aabb\nsignature: 1122\n\n"
                 "```json\n{\"cards\": []}\n```\n")
         r = parse_reveal(body)
+        self.assertEqual(r.pubkey, "deadbeef")
         self.assertEqual(r.nonce, "aabb")
         self.assertEqual(r.signature, "1122")
         self.assertEqual(r.loadout, {"cards": []})
 
     def test_parse_reveal_no_loadout(self):
-        body = "nonce: aabb\nsignature: 1122\n"
+        body = "pubkey: aa\nnonce: aabb\nsignature: 1122\n"
+        with self.assertRaises(ValueError):
+            parse_reveal(body)
+
+    def test_parse_reveal_no_pubkey(self):
+        """pubkey is mandatory — required to dispatch reveals to the right
+        side under arbitrary comment arrival order."""
+        body = ("nonce: aabb\nsignature: 1122\n\n"
+                "```json\n{\"cards\": []}\n```\n")
         with self.assertRaises(ValueError):
             parse_reveal(body)
 
@@ -238,10 +258,12 @@ class TestArbitrate(unittest.TestCase):
     def test_tampered_loadout_caught(self):
         s = make_protocol_set(issue=42)
         # Modify loadout in reveal but keep old signature — sig won't verify
-        # AND commit hash won't match
+        # AND commit hash won't match. Pubkey stays correct so the reveal
+        # routes to side A; the verification step is what catches the tamper.
         bad_lo = json.loads(json.dumps(s["lo_a"]))
         bad_lo["cards"][0]["atk"] = 999
-        bad_reveal = (f"nonce: {s['nonce_a']}\nsignature: {s['sig_a']}\n\n"
+        bad_reveal = (f"pubkey: {s['pub_a']}\nnonce: {s['nonce_a']}\n"
+                      f"signature: {s['sig_a']}\n\n"
                       f"```json\n{json.dumps(bad_lo)}\n```\n")
         result = arbitrate(s["issue"], s["challenge"], s["accept"],
                            bad_reveal, s["reveal_b"])
@@ -251,6 +273,62 @@ class TestArbitrate(unittest.TestCase):
 
     def test_missing_phase_data_returns_missing(self):
         result = arbitrate(99, "garbage body", "", "", "")
+        self.assertFalse(result.ok)
+        self.assertEqual(result.reason, "missing_data")
+
+    def test_reveals_in_swapped_order_resolve_identically(self):
+        """The arbiter dispatches reveals to sides by embedded pubkey, so
+        responder revealing first must produce the same outcome.
+
+        This is the property that makes the engine ↔ arbiter contract safe
+        under GitHub's lack of comment-arrival ordering guarantees.
+        """
+        s = make_protocol_set(issue=42)
+        canonical = arbitrate(s["issue"], s["challenge"], s["accept"],
+                              s["reveal_a"], s["reveal_b"])
+        swapped = arbitrate(s["issue"], s["challenge"], s["accept"],
+                            s["reveal_b"], s["reveal_a"])
+        self.assertTrue(canonical.ok)
+        self.assertTrue(swapped.ok)
+        self.assertEqual(canonical.winner, swapped.winner)
+        self.assertEqual(canonical.seed_hex, swapped.seed_hex)
+        self.assertEqual(canonical.side_a_final_hp, swapped.side_a_final_hp)
+        self.assertEqual(canonical.side_b_final_hp, swapped.side_b_final_hp)
+
+    def test_reveal_with_unknown_pubkey_is_cheat(self):
+        """A reveal whose pubkey doesn't match either side is a cheat."""
+        s = make_protocol_set(issue=42)
+        # Build a reveal carrying a third pubkey unrelated to the match.
+        priv_c, pub_c = make_id(0xCC)
+        lo = full_loadout("C")
+        nonce_c = "cc" * 32
+        sig_c = priv_c.sign(signing_payload(s["issue"], lo, nonce_c)).hex()
+        rogue = (f"pubkey: {pub_c}\nnonce: {nonce_c}\nsignature: {sig_c}\n\n"
+                 f"```json\n{json.dumps(lo)}\n```\n")
+        result = arbitrate(s["issue"], s["challenge"], s["accept"],
+                           s["reveal_a"], rogue)
+        self.assertFalse(result.ok)
+        self.assertEqual(result.reason, "cheat")
+        self.assertTrue(any("does not match" in e for e in result.errors))
+
+    def test_two_reveals_from_same_pubkey_is_cheat(self):
+        """Replaying the same reveal twice (e.g. as a DoS) is detected."""
+        s = make_protocol_set(issue=42)
+        result = arbitrate(s["issue"], s["challenge"], s["accept"],
+                           s["reveal_a"], s["reveal_a"])
+        self.assertFalse(result.ok)
+        self.assertEqual(result.reason, "cheat")
+        self.assertTrue(
+            any("two reveals" in e for e in result.errors))
+
+    def test_only_one_reveal_returns_missing_data(self):
+        """If only one side reveals, missing_data — not cheat."""
+        s = make_protocol_set(issue=42)
+        # Pass the same body twice: first revealer will be matched, second
+        # will collide (cheat) — so test missing case using empty body.
+        # An empty body will fail parse_reveal first, surfacing missing_data.
+        result = arbitrate(s["issue"], s["challenge"], s["accept"],
+                           s["reveal_a"], "")
         self.assertFalse(result.ok)
         self.assertEqual(result.reason, "missing_data")
 

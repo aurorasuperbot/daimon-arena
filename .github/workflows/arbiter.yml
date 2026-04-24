@@ -9,7 +9,9 @@ name: Arbiter
 #   1. Issue opened from match-challenge template with `loadout_commit:` in body
 #   2. Opponent comments with `/accept` block (`opponent_pubkey:`, `loadout_commit:`)
 #   3. Each player posts a `/reveal` comment containing fenced JSON loadout +
-#      `nonce:` + `signature:`
+#      `pubkey:` + `nonce:` + `signature:`. The arbiter dispatches each
+#      reveal to the correct side by embedded pubkey, so the comments may
+#      arrive in either order — responder may reveal before challenger.
 #   4. The 4th relevant comment (or 3rd, if both phases pass) triggers settlement.
 #
 # Cross-repo engine pull:
@@ -88,13 +90,15 @@ jobs:
           gh api "repos/${{ github.repository }}/issues/$ISSUE_NUMBER/comments" \
             --jq '.[] | "\(.id)\t\(.user.login)\t\(.body | gsub("\n"; "\\n"))"' \
             > /tmp/arbiter/comments.tsv || true
-          # Find first /accept and split out reveals — naive parser, robust to comment ordering.
+          # Find first /accept and collect /reveal comments. Reveals are
+          # written in arrival order — labels are arbitrary because the
+          # arbiter dispatches each reveal to the correct side using the
+          # embedded `pubkey:` field, not the file name.
           python <<'EOF'
           from pathlib import Path
           tsv = Path("/tmp/arbiter/comments.tsv").read_text() if Path("/tmp/arbiter/comments.tsv").exists() else ""
           accept_body = ""
-          reveal_a_body = ""
-          reveal_b_body = ""
+          reveal_bodies = []
           for line in tsv.splitlines():
               parts = line.split("\t", 2)
               if len(parts) < 3:
@@ -104,16 +108,15 @@ jobs:
               low = body.strip().lower()
               if not accept_body and low.startswith("/accept"):
                   accept_body = body
-              elif "/reveal" in low and "nonce:" in low:
-                  if not reveal_a_body:
-                      reveal_a_body = body
-                  elif not reveal_b_body:
-                      reveal_b_body = body
+              elif "/reveal" in low and "nonce:" in low and "pubkey:" in low:
+                  reveal_bodies.append(body)
+                  if len(reveal_bodies) == 2:
+                      break
           Path("/tmp/arbiter/accept.txt").write_text(accept_body)
-          Path("/tmp/arbiter/reveal_a.txt").write_text(reveal_a_body)
-          Path("/tmp/arbiter/reveal_b.txt").write_text(reveal_b_body)
-          have_all = bool(accept_body and reveal_a_body and reveal_b_body)
-          print(f"::notice::accept={bool(accept_body)} reveal_a={bool(reveal_a_body)} reveal_b={bool(reveal_b_body)}")
+          Path("/tmp/arbiter/reveal_1.txt").write_text(reveal_bodies[0] if len(reveal_bodies) >= 1 else "")
+          Path("/tmp/arbiter/reveal_2.txt").write_text(reveal_bodies[1] if len(reveal_bodies) >= 2 else "")
+          have_all = bool(accept_body and len(reveal_bodies) == 2)
+          print(f"::notice::accept={bool(accept_body)} reveals={len(reveal_bodies)}")
           Path("/tmp/arbiter/ready").write_text("1" if have_all else "0")
           EOF
           READY=$(cat /tmp/arbiter/ready)
@@ -128,8 +131,8 @@ jobs:
             --issue-number "$ISSUE_NUMBER" \
             --challenge-body /tmp/arbiter/challenge.txt \
             --accept-body    /tmp/arbiter/accept.txt \
-            --reveal-a-body  /tmp/arbiter/reveal_a.txt \
-            --reveal-b-body  /tmp/arbiter/reveal_b.txt \
+            --reveal-1-body  /tmp/arbiter/reveal_1.txt \
+            --reveal-2-body  /tmp/arbiter/reveal_2.txt \
             --arena-root     . \
             > /tmp/arbiter/result.json
 
