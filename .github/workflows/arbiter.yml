@@ -15,7 +15,7 @@ name: Arbiter
 #   4. The 4th relevant comment (or 3rd, if both phases pass) triggers settlement.
 #
 # Cross-repo engine pull:
-#   The arbiter needs the `daimon` engine. Until v0.1.0 is on PyPI we install
+#   The arbiter needs the `daimon` engine. Until the engine is on PyPI we install
 #   from the private engine repo using ENGINE_READ_TOKEN — a fine-grained PAT
 #   scoped to repo:read on aurorasuperbot/daimon. If the secret is absent the
 #   workflow falls back to running the SELF-TEST only (the script is still the
@@ -59,7 +59,7 @@ jobs:
             echo "::warning::ENGINE_READ_TOKEN secret not set; arbiter will only self-test."
             pip install cryptography
           else
-            pip install "git+https://x-access-token:${ENGINE_READ_TOKEN}@github.com/aurorasuperbot/daimon.git@v0.1.0"
+            pip install "git+https://x-access-token:${ENGINE_READ_TOKEN}@github.com/aurorasuperbot/daimon.git@v0.2.0"
             echo "engine_available=true" >> "$GITHUB_OUTPUT"
           fi
 

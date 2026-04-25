@@ -1,9 +1,22 @@
 name: Validator
 
-# Triggered on every Issue create / edit. Checks that the Issue body matches its
-# template's required fields. Posts a sticky comment if invalid; auto-labels if valid.
+# Triggered on every Issue create / edit. Calls scripts/validate_issue.py
+# (the canonical validator) to schema-check the Issue body against its
+# template's required fields. Applies `valid`/`invalid` label and
+# sticky-comments the first error if invalid.
 #
-# V0.1 alpha: skeleton only. Logic lands in V1.1 with the rest of the arbiter.
+# State this workflow protects:
+#   - The arbiter (arbiter.yml) trusts that match-challenge bodies have
+#     a 64-hex `loadout_commit:` and `challenger_pubkey:`.
+#   - The trade-settler (trade-settle.yml) trusts that trade-offer bodies
+#     parse into well-formed offering/wanting blocks.
+#   - The dispute pipeline trusts that dispute-appeal bodies carry a
+#     pubkey + claim + evidence.
+#
+# Side-effect contract:
+#   - The Python script is read-only — emits a single JSON envelope to
+#     stdout. All GH mutations (label / comment / lock) live in the YAML
+#     so the script stays unit-testable from the CLI.
 
 on:
   issues:
@@ -17,12 +30,106 @@ jobs:
   validate:
     runs-on: ubuntu-latest
     steps:
-      - name: Skeleton placeholder
+      - name: Checkout arena
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Self-test the validator
+        # Always runs first — proves the script works in CI even before
+        # any real Issue is filed.
+        run: python scripts/validate_issue.py --self-test
+
+      - name: Fetch Issue body + labels
+        id: fetch
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
         run: |
-          echo "Validator workflow not yet implemented (V1.1)."
-          echo "Will:"
-          echo "  - Parse Issue body against its template's required fields."
-          echo "  - Verify pubkey hex format on identity-bearing templates."
-          echo "  - Verify signature on signed-acceptance fields."
-          echo "  - Add 'valid' or 'invalid' label."
-          echo "  - Sticky-comment with first failure."
+          mkdir -p /tmp/validator
+          gh issue view "$ISSUE_NUMBER" --json body --jq .body \
+            > /tmp/validator/body.txt
+          # Comma-separated label list — script tolerates extras / unknown labels.
+          LABELS=$(gh issue view "$ISSUE_NUMBER" --json labels \
+            --jq '[.labels[].name] | join(",")')
+          echo "labels=$LABELS" >> "$GITHUB_OUTPUT"
+
+      - name: Validate
+        id: validate
+        env:
+          LABELS: ${{ steps.fetch.outputs.labels }}
+        run: |
+          python scripts/validate_issue.py \
+            --body-file /tmp/validator/body.txt \
+            --labels "$LABELS" \
+            > /tmp/validator/result.json
+          cat /tmp/validator/result.json
+          LABEL=$(jq -r .label /tmp/validator/result.json)
+          ERR=$(jq -r '.errors[0] // ""' /tmp/validator/result.json)
+          TEMPLATE=$(jq -r '.template // ""' /tmp/validator/result.json)
+          echo "label=$LABEL"       >> "$GITHUB_OUTPUT"
+          echo "template=$TEMPLATE" >> "$GITHUB_OUTPUT"
+          # Multiline-safe error passthrough via env file
+          {
+            echo "first_error<<__EOF__"
+            echo "$ERR"
+            echo "__EOF__"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Skip — no recognized template label
+        if: steps.validate.outputs.label == 'skip'
+        run: |
+          echo "::notice::No recognized template label on this Issue; skipping validation."
+
+      - name: Apply 'valid' label
+        if: steps.validate.outputs.label == 'valid'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+        run: |
+          gh issue edit "$ISSUE_NUMBER" --remove-label "invalid" || true
+          gh issue edit "$ISSUE_NUMBER" --add-label    "valid"
+
+      - name: Apply 'invalid' label + sticky comment
+        if: steps.validate.outputs.label == 'invalid'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+          FIRST_ERROR: ${{ steps.validate.outputs.first_error }}
+          TEMPLATE:    ${{ steps.validate.outputs.template }}
+        run: |
+          gh issue edit "$ISSUE_NUMBER" --remove-label "valid" || true
+          gh issue edit "$ISSUE_NUMBER" --add-label    "invalid"
+
+          # Sticky-comment pattern: find a prior comment containing our
+          # marker, edit it in place; otherwise post fresh. Keeps the Issue
+          # thread clean across edit-loops.
+          MARKER='<!-- daimon-validator -->'
+          BODY=$(cat <<EOF
+$MARKER
+**Validator: \`invalid\`** — template \`$TEMPLATE\`
+
+\`\`\`
+$FIRST_ERROR
+\`\`\`
+
+Edit the Issue body to fix the issue and the validator will re-run automatically.
+See [arena/templates/](../tree/main/.github/ISSUE_TEMPLATE) for the canonical schemas.
+EOF
+)
+          # Locate prior sticky comment
+          PRIOR_ID=$(gh api "repos/${{ github.repository }}/issues/$ISSUE_NUMBER/comments" \
+            --jq "[.[] | select(.body | contains(\"$MARKER\"))] | .[0].id // empty")
+
+          if [ -n "$PRIOR_ID" ]; then
+            gh api --method PATCH \
+              "repos/${{ github.repository }}/issues/comments/$PRIOR_ID" \
+              -f body="$BODY" >/dev/null
+            echo "::notice::Updated sticky validator comment $PRIOR_ID."
+          else
+            gh issue comment "$ISSUE_NUMBER" --body "$BODY"
+            echo "::notice::Posted fresh sticky validator comment."
+          fi

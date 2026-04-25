@@ -1,8 +1,20 @@
 name: Mining Audit
 
-# Spot-checks signed mining totals against published receipt hashes. Runs daily.
+# Verifies every published mining ledger in arena/mining/ daily at 04:17 UTC.
 #
-# V0.1 alpha: skeleton only. Logic lands in V1.1.
+# What it does (delegates to scripts/audit_mining.py):
+#   1. Walks arena/mining/<github_handle>/ledger.jsonl
+#   2. Looks up the canonical pubkey in arena/identities/<handle>.json
+#   3. Runs daimon.mining.ledger.verify_ledger() with that pubkey pinned
+#      → re-derives prev_hash chain from genesis
+#      → verifies every entry's ed25519 signature
+#      → confirms every entry was signed by that handle's pubkey
+#   4. On any failure: files a dispute Issue + appends to Wall-of-Shame.md
+#
+# Cross-repo engine pull mirrors arbiter.yml — uses ENGINE_READ_TOKEN
+# (a fine-grained PAT scoped to repo:read on aurorasuperbot/daimon)
+# to install the engine from git@v0.2.0. Falls back to self-test only
+# if the secret is missing.
 
 on:
   schedule:
@@ -10,18 +22,116 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write
-  issues: write
+  contents: write   # commit Wall-of-Shame updates
+  issues:   write   # file disputes
 
 jobs:
   audit:
     runs-on: ubuntu-latest
     steps:
-      - name: Skeleton placeholder
+      - name: Checkout arena
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install daimon engine
+        id: install_engine
+        env:
+          ENGINE_READ_TOKEN: ${{ secrets.ENGINE_READ_TOKEN }}
         run: |
-          echo "Mining audit not yet implemented (V1.1)."
-          echo "Will:"
-          echo "  - Pull each handle's mining/<handle>/<date>.jsonl head."
-          echo "  - Verify hash chain integrity against signed totals."
-          echo "  - Re-compute reward formula on a random 1% sample."
-          echo "  - File dispute Issue if discrepancies exceed tolerance."
+          if [ -z "$ENGINE_READ_TOKEN" ]; then
+            echo "engine_available=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::ENGINE_READ_TOKEN secret not set; mining audit will only self-test."
+          else
+            pip install "git+https://x-access-token:${ENGINE_READ_TOKEN}@github.com/aurorasuperbot/daimon.git@v0.2.0"
+            echo "engine_available=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Self-test the auditor
+        if: steps.install_engine.outputs.engine_available == 'true'
+        run: python scripts/audit_mining.py --self-test
+
+      - name: Run audit
+        id: audit
+        if: steps.install_engine.outputs.engine_available == 'true'
+        run: |
+          mkdir -p /tmp/audit
+          python scripts/audit_mining.py --arena-root . > /tmp/audit/result.json
+          cat /tmp/audit/result.json
+          AUDITED=$(jq -r .audited /tmp/audit/result.json)
+          FAIL_COUNT=$(jq -r '.failed | length' /tmp/audit/result.json)
+          echo "audited=$AUDITED"        >> "$GITHUB_OUTPUT"
+          echo "failures=$FAIL_COUNT"    >> "$GITHUB_OUTPUT"
+
+      - name: File dispute Issues for any failures
+        if: steps.install_engine.outputs.engine_available == 'true' && steps.audit.outputs.failures != '0'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # One Issue per failed handle so they triage independently.
+          # Body carries the verifier's first error + first_bad_index so
+          # the cheater (or auditor) can reproduce locally with:
+          #     daimon ledger verify mining/<handle>/ledger.jsonl
+          jq -c '.failed[]' /tmp/audit/result.json | while read -r FAIL; do
+            HANDLE=$(echo "$FAIL"        | jq -r .handle)
+            FIRST_ERROR=$(echo "$FAIL"   | jq -r '.errors[0] // "(no error message)"')
+            FIRST_BAD=$(echo "$FAIL"     | jq -r .first_bad_index)
+            ENTRIES=$(echo "$FAIL"       | jq -r .entries)
+            TODAY=$(date -u +%Y-%m-%d)
+
+            BODY=$(cat <<EOF
+**Mining audit failure** — \`$HANDLE\` — $TODAY
+
+The daily auditor (\`scripts/audit_mining.py\`) ran \`verify_ledger()\` against
+\`mining/$HANDLE/ledger.jsonl\` with the canonical pubkey from
+\`identities/$HANDLE.json\` pinned. The chain or a signature failed verification.
+
+- entries:         $ENTRIES
+- first bad index: $FIRST_BAD
+- first error:     \`$FIRST_ERROR\`
+
+Reproduce locally:
+
+\`\`\`bash
+daimon ledger verify mining/$HANDLE/ledger.jsonl
+\`\`\`
+
+If you believe this is in error, open a \`dispute-appeal\` Issue
+referencing this one. Otherwise the handle will be added to
+\`Wall-of-Shame.md\` on the next audit run that confirms the failure.
+EOF
+)
+            gh issue create \
+              --title "audit-fail: $HANDLE ($TODAY)" \
+              --label "mining-audit-fail,invalid" \
+              --body  "$BODY"
+          done
+
+      - name: Append failures to Wall-of-Shame.md
+        if: steps.install_engine.outputs.engine_available == 'true' && steps.audit.outputs.failures != '0'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TODAY=$(date -u +%Y-%m-%d)
+          {
+            echo ""
+            echo "## $TODAY mining audit"
+            jq -r '.failed[] | "- `\(.handle)` — \(.errors[0] // \"(no error)\") (entry \(.first_bad_index))"' \
+              /tmp/audit/result.json
+          } >> Wall-of-Shame.md
+
+          git config user.name  "daimon-auditor[bot]"
+          git config user.email "auditor@aurorasuperbot.local"
+          git add Wall-of-Shame.md
+          if ! git diff --cached --quiet; then
+            git commit -m "auditor: append $TODAY mining failures to Wall-of-Shame"
+            git push
+          fi
+
+      - name: Summary
+        if: steps.install_engine.outputs.engine_available == 'true'
+        run: |
+          echo "Audited ${{ steps.audit.outputs.audited }} ledgers, ${{ steps.audit.outputs.failures }} failed."

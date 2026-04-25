@@ -1,9 +1,21 @@
 name: Trade Settler
 
-# Triggered when both parties to a trade have posted byte-identical signed
-# accept payloads. Settles the trade in a single atomic commit.
+# Triggered when a trade-offer Issue receives a /accept comment. If both
+# parties have now posted byte-identical signed acceptances, settles the
+# trade in a single atomic commit (collections + trade record).
 #
-# V0.1 alpha: skeleton only. Logic lands in V1.1.
+# Protocol:
+#   1. Issue opened from trade-offer template (offerer_pubkey, counterparty_handle,
+#      offering, wanting blocks).
+#   2. Each party posts a /accept comment containing acceptor_pubkey,
+#      trade_payload_hash (sha256 of canonical {offerer_pk, cp_pk, offering,
+#      wanting, issue_number}), and ed25519 signature over the hash.
+#   3. The settler verifies both signatures + identity manifest binding +
+#      ownership, then atomically transfers serials between collections.
+#
+# Cross-repo engine pull mirrors arbiter.yml — uses ENGINE_READ_TOKEN to
+# install the engine from git@v0.2.0. Falls back to self-test only if
+# the secret is missing.
 
 on:
   issue_comment:
@@ -16,20 +28,155 @@ on:
 
 permissions:
   contents: write
-  issues: write
+  issues:   write
 
 jobs:
   settle:
-    if: contains(github.event.issue.labels.*.name, 'trade-offer') || github.event_name == 'workflow_dispatch'
+    if: |
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.issue && contains(github.event.issue.labels.*.name, 'trade-offer'))
     runs-on: ubuntu-latest
     steps:
-      - name: Skeleton placeholder
+      - name: Checkout arena
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install daimon engine
+        id: install_engine
+        env:
+          ENGINE_READ_TOKEN: ${{ secrets.ENGINE_READ_TOKEN }}
         run: |
-          echo "Trade settler not yet implemented (V1.1)."
-          echo "Will:"
-          echo "  - Detect dual signed-accept comments (byte-identical card lists)."
-          echo "  - Verify both signatures against bound pubkeys."
-          echo "  - Verify both parties currently own the listed serials."
-          echo "  - Single atomic commit: update both collections/<handle>.json files."
-          echo "  - Append to trades/<id>.json with full audit trail."
-          echo "  - Lock + close Issue (NEVER delete)."
+          if [ -z "$ENGINE_READ_TOKEN" ]; then
+            echo "engine_available=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::ENGINE_READ_TOKEN secret not set; trade settler will only self-test."
+            pip install cryptography
+          else
+            pip install "git+https://x-access-token:${ENGINE_READ_TOKEN}@github.com/aurorasuperbot/daimon.git@v0.2.0"
+            echo "engine_available=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Self-test the settler
+        if: steps.install_engine.outputs.engine_available == 'true'
+        run: python scripts/settle_trade.py --self-test
+
+      - name: Determine issue number
+        id: issue
+        env:
+          ISSUE_INPUT: ${{ inputs.issue_number }}
+          EVENT_ISSUE: ${{ github.event.issue.number }}
+        run: |
+          NUM="${ISSUE_INPUT:-$EVENT_ISSUE}"
+          echo "number=$NUM" >> "$GITHUB_OUTPUT"
+
+      - name: Fetch Issue body + author + /accept comments
+        id: fetch
+        if: steps.install_engine.outputs.engine_available == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ISSUE_NUMBER: ${{ steps.issue.outputs.number }}
+        run: |
+          mkdir -p /tmp/trade
+          gh issue view "$ISSUE_NUMBER" --json body,user \
+            --jq '{body: .body, author: .user.login}' > /tmp/trade/meta.json
+          jq -r .body   /tmp/trade/meta.json > /tmp/trade/challenge.txt
+          AUTHOR=$(jq -r .author /tmp/trade/meta.json)
+          echo "author=$AUTHOR" >> "$GITHUB_OUTPUT"
+
+          # Pull all comments, keep first 2 distinct /accept bodies
+          # (settler dedupes by acceptor_pubkey too — this is bandwidth optim).
+          gh api "repos/${{ github.repository }}/issues/$ISSUE_NUMBER/comments" \
+            --jq '.[] | "\(.user.login)\t\(.body | gsub("\n"; "\\n"))"' \
+            > /tmp/trade/comments.tsv || true
+
+          python <<'EOF'
+          from pathlib import Path
+          tsv = Path("/tmp/trade/comments.tsv").read_text() if Path("/tmp/trade/comments.tsv").exists() else ""
+          accepts = []
+          seen_users = set()
+          for line in tsv.splitlines():
+              parts = line.split("\t", 1)
+              if len(parts) < 2:
+                  continue
+              user, body = parts
+              body = body.replace("\\n", "\n")
+              if "/accept" not in body.lower():
+                  continue
+              if user in seen_users:
+                  continue
+              seen_users.add(user)
+              accepts.append(body)
+              if len(accepts) == 2:
+                  break
+          Path("/tmp/trade/accept_1.txt").write_text(accepts[0] if len(accepts) >= 1 else "")
+          Path("/tmp/trade/accept_2.txt").write_text(accepts[1] if len(accepts) >= 2 else "")
+          ready = "1" if len(accepts) == 2 else "0"
+          Path("/tmp/trade/ready").write_text(ready)
+          print(f"::notice::accepts found: {len(accepts)}")
+          EOF
+          READY=$(cat /tmp/trade/ready)
+          echo "ready=$READY" >> "$GITHUB_OUTPUT"
+
+      - name: Settle
+        id: settle
+        if: steps.fetch.outputs.ready == '1'
+        env:
+          ISSUE_NUMBER: ${{ steps.issue.outputs.number }}
+          OFFERER:      ${{ steps.fetch.outputs.author }}
+        run: |
+          python scripts/settle_trade.py \
+            --arena-root . \
+            --issue-number "$ISSUE_NUMBER" \
+            --offerer-handle "$OFFERER" \
+            --challenge-body /tmp/trade/challenge.txt \
+            --accept-body    /tmp/trade/accept_1.txt \
+            --accept-body    /tmp/trade/accept_2.txt \
+            > /tmp/trade/result.json
+          cat /tmp/trade/result.json
+          OK=$(jq -r .ok /tmp/trade/result.json)
+          echo "ok=$OK" >> "$GITHUB_OUTPUT"
+
+      - name: Commit settlement + close on success
+        if: steps.settle.outputs.ok == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ISSUE_NUMBER: ${{ steps.issue.outputs.number }}
+        run: |
+          git config user.name  "daimon-trader[bot]"
+          git config user.email "trader@aurorasuperbot.local"
+          git add collections/ trades/
+          if ! git diff --cached --quiet; then
+            git commit -m "trader: settle trade #$ISSUE_NUMBER"
+            git push
+          fi
+
+          TRADE_ID=$(jq -r .trade_id /tmp/trade/result.json)
+          OFFERED=$(jq -r '.offered | join(", ")' /tmp/trade/result.json)
+          WANTED=$(jq  -r '.wanted  | join(", ")' /tmp/trade/result.json)
+          gh issue comment "$ISSUE_NUMBER" --body "Trade settled. trade_id=\`$TRADE_ID\`. offered: $OFFERED — wanted: $WANTED. See \`trades/$ISSUE_NUMBER.json\`."
+          gh issue lock  "$ISSUE_NUMBER" --reason resolved || true
+          gh issue close "$ISSUE_NUMBER" --reason completed || true
+
+      - name: Comment on settlement failure
+        if: steps.settle.outputs.ok == 'false'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ISSUE_NUMBER: ${{ steps.issue.outputs.number }}
+        run: |
+          STAGE=$(jq -r .stage /tmp/trade/result.json)
+          ERROR=$(jq -r .error /tmp/trade/result.json)
+          BODY=$(cat <<EOF
+**Trade settlement failed** at stage \`$STAGE\`.
+
+\`\`\`
+$ERROR
+\`\`\`
+
+Edit your /accept comment (or the trade body) and re-trigger settlement.
+The settler runs on every new \`/accept\` comment.
+EOF
+)
+          gh issue comment "$ISSUE_NUMBER" --body "$BODY"
