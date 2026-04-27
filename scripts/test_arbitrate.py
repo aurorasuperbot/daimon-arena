@@ -380,6 +380,89 @@ class TestPersistence(unittest.TestCase):
             losses = sum(e["losses"] for e in data["entries"].values())
             self.assertEqual(wins, 1)
             self.assertEqual(losses, 1)
+            # Settled-match guard recorded the issue number.
+            self.assertEqual(data.get("settled_match_ids"), [77])
+
+    def test_update_leaderboard_idempotent_on_replay(self):
+        """Calling update_leaderboard N times for the same match must
+        produce identical standings — the live arbiter workflow can fire
+        multiple concurrent runs (one per issue_comment), and even with
+        the concurrency group landed in arbiter.yml, idempotency at this
+        layer is the canonical guarantee that double-counting is
+        impossible."""
+        s = make_protocol_set(issue=88)
+        result = arbitrate(s["issue"], s["challenge"], s["accept"],
+                           s["reveal_a"], s["reveal_b"])
+        if result.winner is None:
+            self.skipTest("draw — can't exercise standings idempotency")
+        with tempfile.TemporaryDirectory() as tmp:
+            arena = Path(tmp)
+            update_leaderboard(arena, result)
+            update_leaderboard(arena, result)
+            update_leaderboard(arena, result)
+            data = json.loads((arena / "leaderboard.json").read_text())
+            wins = sum(e["wins"] for e in data["entries"].values())
+            losses = sum(e["losses"] for e in data["entries"].values())
+            self.assertEqual(wins, 1)
+            self.assertEqual(losses, 1)
+            self.assertEqual(data["settled_match_ids"], [88])
+
+    def test_update_leaderboard_distinct_matches_accumulate(self):
+        """Idempotency keys on issue_number — DIFFERENT matches must still
+        accumulate. Catches the bug where someone overgeneralizes the
+        guard to "skip if any match settled" or "skip if pubkeys present"."""
+        s1 = make_protocol_set(issue=10)
+        r1 = arbitrate(s1["issue"], s1["challenge"], s1["accept"],
+                       s1["reveal_a"], s1["reveal_b"])
+        s2 = make_protocol_set(issue=20)
+        r2 = arbitrate(s2["issue"], s2["challenge"], s2["accept"],
+                       s2["reveal_a"], s2["reveal_b"])
+        if r1.winner is None or r2.winner is None:
+            self.skipTest("draw — can't exercise distinct-match accumulation")
+        with tempfile.TemporaryDirectory() as tmp:
+            arena = Path(tmp)
+            update_leaderboard(arena, r1)
+            update_leaderboard(arena, r2)
+            data = json.loads((arena / "leaderboard.json").read_text())
+            # Each match is its own row of (1 win + 1 loss). The two matches
+            # use different pubkey pairs (different identities seeded per
+            # protocol set), so cumulative totals are 2 wins / 2 losses.
+            wins = sum(e["wins"] for e in data["entries"].values())
+            losses = sum(e["losses"] for e in data["entries"].values())
+            self.assertEqual(wins, 2)
+            self.assertEqual(losses, 2)
+            self.assertEqual(sorted(data["settled_match_ids"]), [10, 20])
+
+    def test_write_match_record_idempotent_same_content(self):
+        s = make_protocol_set(issue=99)
+        result = arbitrate(s["issue"], s["challenge"], s["accept"],
+                           s["reveal_a"], s["reveal_b"])
+        with tempfile.TemporaryDirectory() as tmp:
+            arena = Path(tmp)
+            p1 = write_match_record(arena, result)
+            mtime1 = p1.stat().st_mtime_ns
+            content1 = p1.read_text()
+            # Second call must not raise; must NOT rewrite.
+            p2 = write_match_record(arena, result)
+            self.assertEqual(p1, p2)
+            self.assertEqual(p2.read_text(), content1)
+
+    def test_write_match_record_refuses_to_overwrite_diff(self):
+        """Append-only history: a match-record file on disk is law. If
+        someone tries to settle the same issue with different content
+        (cheat / arbiter drift), this MUST blow up loudly."""
+        s = make_protocol_set(issue=55)
+        result = arbitrate(s["issue"], s["challenge"], s["accept"],
+                           s["reveal_a"], s["reveal_b"])
+        with tempfile.TemporaryDirectory() as tmp:
+            arena = Path(tmp)
+            write_match_record(arena, result)
+            # Surgically change the file to simulate drift.
+            path = arena / "matches" / "55.json"
+            path.write_text(path.read_text().replace('"ok": true',
+                                                     '"ok": false'))
+            with self.assertRaises(RuntimeError):
+                write_match_record(arena, result)
 
 
 if __name__ == "__main__":

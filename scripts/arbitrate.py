@@ -428,14 +428,50 @@ def arbitrate(
 # ---------------------------------------------------------------------------
 
 def write_match_record(arena_root: Path, result: ArbitrationResult) -> Path:
+    """Write ``matches/<issue>.json``.
+
+    **Idempotent**: if the file already exists with byte-identical content,
+    this is a no-op (returns the existing path). If it exists with
+    *different* content, raises ``RuntimeError`` — that means either the
+    arbiter is non-deterministic (a real bug to investigate) or someone is
+    trying to overwrite a settled match (a cheat attempt). Either way, we
+    do NOT silently overwrite — the on-chain history must be append-only.
+
+    The arbiter workflow can fire ``issue_comment`` runs concurrently
+    (one per /accept + /reveal comment); the concurrency group in
+    ``arbiter.yml`` serializes them but each surviving run will still call
+    this function with the same canonical result. Idempotency at this
+    layer keeps that safe even if the workflow guard ever drifts.
+    """
     matches_dir = arena_root / "matches"
     matches_dir.mkdir(exist_ok=True)
     path = matches_dir / f"{result.issue_number}.json"
-    path.write_text(json.dumps(result.to_record(), indent=2, sort_keys=True))
+    payload = json.dumps(result.to_record(), indent=2, sort_keys=True)
+    if path.exists():
+        existing = path.read_text()
+        if existing == payload:
+            return path  # already settled with the same canonical result
+        raise RuntimeError(
+            f"matches/{result.issue_number}.json already exists with "
+            f"different content; refusing to overwrite a settled match."
+        )
+    path.write_text(payload)
     return path
 
 
 def update_leaderboard(arena_root: Path, result: ArbitrationResult) -> None:
+    """Apply this match's win/loss delta to ``leaderboard.json``.
+
+    **Idempotent** via ``settled_match_ids``: each match's issue_number is
+    added to that list when its delta is first applied, and subsequent
+    calls for the same match are no-ops. Without this guard, two arbiter
+    runs settling the same match (race window before ``arbiter.yml``'s
+    ``concurrency`` group landed, or any future re-arbitration) would
+    double-count the standings.
+
+    Draws do not update standings under the V1 rule and bypass the
+    settled-set entirely.
+    """
     if not result.ok or result.winner is None:
         return  # draws don't update standings (V1 simple rule)
     lb_path = arena_root / "leaderboard.json"
@@ -443,6 +479,10 @@ def update_leaderboard(arena_root: Path, result: ArbitrationResult) -> None:
         data = json.loads(lb_path.read_text())
     else:
         data = {"version": 1, "entries": {}}
+
+    settled = data.setdefault("settled_match_ids", [])
+    if result.issue_number in settled:
+        return  # already counted — don't double-credit
 
     entries = data.setdefault("entries", {})
     winner_pk = result.challenger_pubkey if result.winner == 0 else result.opponent_pubkey
@@ -452,6 +492,8 @@ def update_leaderboard(arena_root: Path, result: ArbitrationResult) -> None:
         entry = entries.setdefault(pk, {"wins": 0, "losses": 0, "draws": 0})
         entry[key] += 1
 
+    settled.append(result.issue_number)
+    settled.sort()  # canonical order — easier diff on the committed file
     data["last_updated"] = dt.datetime.now(dt.timezone.utc).isoformat()
     lb_path.write_text(json.dumps(data, indent=2, sort_keys=True))
 

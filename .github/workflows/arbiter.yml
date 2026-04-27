@@ -34,6 +34,23 @@ permissions:
   contents: write
   issues: write
 
+# Serialize arbiter runs PER ISSUE so /accept + 2 /reveal comments don't
+# fire 3 concurrent runs that race each other on `git push`. Without this,
+# only one push lands and the rest hit `! [rejected] (fetch first)`. The
+# arbiter is idempotent at the script layer (settled_match_ids guard +
+# write_match_record refuses to overwrite different content), but funneling
+# through one runner per issue is cheaper, gives clean logs, and prevents
+# any future cross-step races (e.g. a label transition between phases).
+#
+# `cancel-in-progress: false` — never cancel a queued/running arbiter,
+# just queue the new one behind it. The 2nd/3rd runs become near-no-ops
+# (the matches/N.json already exists with same content; settled_match_ids
+# already lists this issue), but they still need to complete normally so
+# the issue_comment trigger doesn't get stuck "in progress" forever.
+concurrency:
+  group: arbiter-issue-${{ github.event.issue.number || inputs.issue_number }}
+  cancel-in-progress: false
+
 jobs:
   arbitrate:
     if: |
@@ -147,7 +164,24 @@ jobs:
           git add matches/ leaderboard.json
           if ! git diff --cached --quiet; then
             git commit -m "arbiter: settle match #$ISSUE_NUMBER"
-            git push
+            # Defensive rebase + push retry. The `concurrency` group above
+            # already serializes per-issue, but a sibling workflow
+            # (mining-audit, validator post-edit, trade-settle) can land
+            # a commit on `main` between our checkout and our push. Rather
+            # than fail-loud and require manual re-dispatch, rebase onto
+            # the latest tip and try once more. The arbiter changes are
+            # confined to matches/ and leaderboard.json, so a rebase is
+            # always semantically safe (no merge conflicts possible
+            # against unrelated workflow commits).
+            for attempt in 1 2 3; do
+              if git push; then
+                echo "::notice::arbiter pushed on attempt $attempt"
+                break
+              fi
+              echo "::warning::push attempt $attempt rejected; rebasing"
+              git pull --rebase origin main
+              [ $attempt -eq 3 ] && exit 1
+            done
           fi
           # Post outcome to Issue
           if [ -f /tmp/arbiter/result.json ]; then

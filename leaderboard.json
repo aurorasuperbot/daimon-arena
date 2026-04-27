@@ -1,17 +1,5 @@
 {
-  "entries": {
-    "104414530a9e3fbe97a9b8fb4dfec5254b79982e579774d97150e29250149c62": {
-      "draws": 0,
-      "losses": 1,
-      "wins": 0
-    },
-    "5872ca2e84eb0fc4e2ad5bbc4b9af2f2f45e603cd31e505a90386f656e5146c8": {
-      "draws": 0,
-      "losses": 0,
-      "wins": 1
-    }
-  },
-  "last_updated": "2026-04-27T14:01:42.675168+00:00",
-  "rankings": [],
-  "schema_version": 1
+  "schema_version": 1,
+  "last_updated": "2026-04-21T00:00:00Z",
+  "rankings": []
 }
