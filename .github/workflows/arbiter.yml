@@ -95,9 +95,34 @@ jobs:
           NUM="${ISSUE_INPUT:-$EVENT_ISSUE}"
           echo "number=$NUM" >> "$GITHUB_OUTPUT"
 
+      - name: Sync to latest main + skip if already settled
+        # actions/checkout pins to the SHA that triggered the workflow. With
+        # the per-issue `concurrency` group above, runs serialize correctly,
+        # but a queued run still checks out the *event-time* SHA — which
+        # predates the in-flight run's settlement push. Syncing to current
+        # `main` here drops that stale snapshot and lets the idempotency
+        # guards in scripts/arbitrate.py recognize "already settled" cleanly.
+        #
+        # If matches/<issue>.json is already on main, the prior run did the
+        # work — skip the rest of this run instead of building a duplicate
+        # commit that would just fail to push and pollute the run log.
+        id: sync
+        if: steps.install_engine.outputs.engine_available == 'true'
+        env:
+          ISSUE_NUMBER: ${{ steps.issue.outputs.number }}
+        run: |
+          git fetch origin main
+          git reset --hard origin/main
+          if [ -f "matches/$ISSUE_NUMBER.json" ]; then
+            echo "::notice::matches/$ISSUE_NUMBER.json already on main — another arbiter run already settled this match; exiting cleanly"
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Fetch Issue + comments
         id: fetch
-        if: steps.install_engine.outputs.engine_available == 'true'
+        if: steps.install_engine.outputs.engine_available == 'true' && steps.sync.outputs.skip != 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           ISSUE_NUMBER: ${{ steps.issue.outputs.number }}
@@ -183,13 +208,18 @@ jobs:
               [ $attempt -eq 3 ] && exit 1
             done
           fi
-          # Post outcome to Issue
+          # Post outcome to Issue. All three are best-effort (`|| true`):
+          # if a prior arbiter run already posted the comment + locked +
+          # closed the issue, GitHub will reject these as duplicates /
+          # locked-issue errors. We don't want to fail the whole run for a
+          # cosmetic-only retry — the canonical artifact is matches/N.json,
+          # which the prior run already pushed.
           if [ -f /tmp/arbiter/result.json ]; then
             WINNER=$(jq -r .winner /tmp/arbiter/result.json)
             REASON=$(jq -r .reason /tmp/arbiter/result.json)
             HP_A=$(jq -r .side_a_final_hp /tmp/arbiter/result.json)
             HP_B=$(jq -r .side_b_final_hp /tmp/arbiter/result.json)
-            gh issue comment "$ISSUE_NUMBER" --body "Arbitrated. winner=$WINNER reason=$REASON hp=$HP_A/$HP_B. See \`matches/$ISSUE_NUMBER.json\`."
+            gh issue comment "$ISSUE_NUMBER" --body "Arbitrated. winner=$WINNER reason=$REASON hp=$HP_A/$HP_B. See \`matches/$ISSUE_NUMBER.json\`." || true
             gh issue lock "$ISSUE_NUMBER" --reason resolved || true
             gh issue close "$ISSUE_NUMBER" --reason completed || true
           fi
