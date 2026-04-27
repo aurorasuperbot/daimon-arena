@@ -80,8 +80,11 @@ jobs:
           ISSUE_NUMBER: ${{ steps.issue.outputs.number }}
         run: |
           mkdir -p /tmp/trade
-          gh issue view "$ISSUE_NUMBER" --json body,user \
-            --jq '{body: .body, author: .user.login}' > /tmp/trade/meta.json
+          # gh issue view's --json schema uses `author` (not `user`); `.author.login`
+          # is the github handle. The earlier `--json body,user` form was rejected
+          # by gh CLI v2.x with "Unknown JSON field: user".
+          gh issue view "$ISSUE_NUMBER" --json body,author \
+            --jq '{body: .body, author: .author.login}' > /tmp/trade/meta.json
           jq -r .body   /tmp/trade/meta.json > /tmp/trade/challenge.txt
           AUTHOR=$(jq -r .author /tmp/trade/meta.json)
           echo "author=$AUTHOR" >> "$GITHUB_OUTPUT"
