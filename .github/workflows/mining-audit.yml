@@ -82,32 +82,36 @@ jobs:
             ENTRIES=$(echo "$FAIL"       | jq -r .entries)
             TODAY=$(date -u +%Y-%m-%d)
 
-            BODY=$(cat <<EOF
-**Mining audit failure** — \`$HANDLE\` — $TODAY
+            # Build body via printf into a tempfile — heredocs inside a YAML `run: |`
+            # block require the body lines to be indented to the YAML block's base
+            # column or the YAML parser rejects them as out-of-block content. printf
+            # avoids the indent gymnastics and keeps the markdown source readable.
+            {
+              printf '%s\n' "**Mining audit failure** — \`$HANDLE\` — $TODAY"
+              printf '\n'
+              printf '%s\n' "The daily auditor (\`scripts/audit_mining.py\`) ran \`verify_ledger()\` against"
+              printf '%s\n' "\`mining/$HANDLE/ledger.jsonl\` with the canonical pubkey from"
+              printf '%s\n' "\`identities/$HANDLE.json\` pinned. The chain or a signature failed verification."
+              printf '\n'
+              printf '%s\n' "- entries:         $ENTRIES"
+              printf '%s\n' "- first bad index: $FIRST_BAD"
+              printf '%s\n' "- first error:     \`$FIRST_ERROR\`"
+              printf '\n'
+              printf '%s\n' "Reproduce locally:"
+              printf '\n'
+              printf '%s\n' '```bash'
+              printf '%s\n' "daimon ledger verify mining/$HANDLE/ledger.jsonl"
+              printf '%s\n' '```'
+              printf '\n'
+              printf '%s\n' "If you believe this is in error, open a \`dispute-appeal\` Issue"
+              printf '%s\n' "referencing this one. Otherwise the handle will be added to"
+              printf '%s\n' "\`Wall-of-Shame.md\` on the next audit run that confirms the failure."
+            } > "/tmp/audit/body_${HANDLE}.md"
 
-The daily auditor (\`scripts/audit_mining.py\`) ran \`verify_ledger()\` against
-\`mining/$HANDLE/ledger.jsonl\` with the canonical pubkey from
-\`identities/$HANDLE.json\` pinned. The chain or a signature failed verification.
-
-- entries:         $ENTRIES
-- first bad index: $FIRST_BAD
-- first error:     \`$FIRST_ERROR\`
-
-Reproduce locally:
-
-\`\`\`bash
-daimon ledger verify mining/$HANDLE/ledger.jsonl
-\`\`\`
-
-If you believe this is in error, open a \`dispute-appeal\` Issue
-referencing this one. Otherwise the handle will be added to
-\`Wall-of-Shame.md\` on the next audit run that confirms the failure.
-EOF
-)
             gh issue create \
               --title "audit-fail: $HANDLE ($TODAY)" \
               --label "mining-audit-fail,invalid" \
-              --body  "$BODY"
+              --body-file "/tmp/audit/body_${HANDLE}.md"
           done
 
       - name: Append failures to Wall-of-Shame.md

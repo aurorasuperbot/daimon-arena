@@ -168,15 +168,17 @@ jobs:
         run: |
           STAGE=$(jq -r .stage /tmp/trade/result.json)
           ERROR=$(jq -r .error /tmp/trade/result.json)
-          BODY=$(cat <<EOF
-**Trade settlement failed** at stage \`$STAGE\`.
-
-\`\`\`
-$ERROR
-\`\`\`
-
-Edit your /accept comment (or the trade body) and re-trigger settlement.
-The settler runs on every new \`/accept\` comment.
-EOF
-)
-          gh issue comment "$ISSUE_NUMBER" --body "$BODY"
+          # Build body via printf into a tempfile — heredocs inside a YAML `run: |`
+          # block require body lines indented to the YAML base column. printf keeps
+          # the markdown source readable without indent gymnastics.
+          {
+            printf '%s\n' "**Trade settlement failed** at stage \`$STAGE\`."
+            printf '\n'
+            printf '%s\n' '```'
+            printf '%s\n' "$ERROR"
+            printf '%s\n' '```'
+            printf '\n'
+            printf '%s\n' "Edit your /accept comment (or the trade body) and re-trigger settlement."
+            printf '%s\n' "The settler runs on every new \`/accept\` comment."
+          } > /tmp/trade/fail_body.md
+          gh issue comment "$ISSUE_NUMBER" --body-file /tmp/trade/fail_body.md

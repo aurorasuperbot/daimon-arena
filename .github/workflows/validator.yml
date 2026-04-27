@@ -108,18 +108,24 @@ jobs:
           # marker, edit it in place; otherwise post fresh. Keeps the Issue
           # thread clean across edit-loops.
           MARKER='<!-- daimon-validator -->'
-          BODY=$(cat <<EOF
-$MARKER
-**Validator: \`invalid\`** — template \`$TEMPLATE\`
+          # Build body via printf into a tempfile — heredocs inside a YAML `run: |`
+          # block require body lines indented to the YAML base column. printf keeps
+          # the markdown source readable without indent gymnastics.
+          mkdir -p /tmp/validator
+          {
+            printf '%s\n' "$MARKER"
+            printf '%s\n' "**Validator: \`invalid\`** — template \`$TEMPLATE\`"
+            printf '\n'
+            printf '%s\n' '```'
+            printf '%s\n' "$FIRST_ERROR"
+            printf '%s\n' '```'
+            printf '\n'
+            printf '%s\n' "Edit the Issue body to fix the issue and the validator will re-run automatically."
+            printf '%s\n' "See [arena/templates/](../tree/main/.github/ISSUE_TEMPLATE) for the canonical schemas."
+          } > /tmp/validator/sticky_body.md
+          # Read back into a variable for both POST (--body) and PATCH (-f body=) call sites.
+          BODY=$(cat /tmp/validator/sticky_body.md)
 
-\`\`\`
-$FIRST_ERROR
-\`\`\`
-
-Edit the Issue body to fix the issue and the validator will re-run automatically.
-See [arena/templates/](../tree/main/.github/ISSUE_TEMPLATE) for the canonical schemas.
-EOF
-)
           # Locate prior sticky comment
           PRIOR_ID=$(gh api "repos/${{ github.repository }}/issues/$ISSUE_NUMBER/comments" \
             --jq "[.[] | select(.body | contains(\"$MARKER\"))] | .[0].id // empty")
@@ -130,6 +136,6 @@ EOF
               -f body="$BODY" >/dev/null
             echo "::notice::Updated sticky validator comment $PRIOR_ID."
           else
-            gh issue comment "$ISSUE_NUMBER" --body "$BODY"
+            gh issue comment "$ISSUE_NUMBER" --body-file /tmp/validator/sticky_body.md
             echo "::notice::Posted fresh sticky validator comment."
           fi
