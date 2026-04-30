@@ -55,7 +55,9 @@ jobs:
             echo "::warning::ENGINE_READ_TOKEN secret not set; trade settler will only self-test."
             pip install cryptography
           else
-            pip install "git+https://x-access-token:${ENGINE_READ_TOKEN}@github.com/aurorasuperbot/daimon.git@v0.2.0"
+            git config --global url."https://x-access-token:${ENGINE_READ_TOKEN}@github.com/".insteadOf "https://github.com/"
+            pip install "git+https://github.com/aurorasuperbot/daimon.git@v2.1.0"
+            git config --global --unset url."https://x-access-token:${ENGINE_READ_TOKEN}@github.com/".insteadOf
             echo "engine_available=true" >> "$GITHUB_OUTPUT"
           fi
 
@@ -78,6 +80,7 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           ISSUE_NUMBER: ${{ steps.issue.outputs.number }}
+          REPO: ${{ github.repository }}
         run: |
           mkdir -p /tmp/trade
           # gh issue view's --json schema uses `author` (not `user`); `.author.login`
@@ -89,23 +92,33 @@ jobs:
           AUTHOR=$(jq -r .author /tmp/trade/meta.json)
           echo "author=$AUTHOR" >> "$GITHUB_OUTPUT"
 
-          # Pull all comments, keep first 2 distinct /accept bodies
-          # (settler dedupes by acceptor_pubkey too — this is bandwidth optim).
-          gh api "repos/${{ github.repository }}/issues/$ISSUE_NUMBER/comments" \
-            --jq '.[] | "\(.user.login)\t\(.body | gsub("\n"; "\\n"))"' \
-            > /tmp/trade/comments.tsv || true
+          # Pull all comments as raw JSON (NOT jq-TSV — newlines in comment
+          # bodies break the TSV parser; this was the arbiter E2E blocker).
+          if ! gh api "repos/$REPO/issues/$ISSUE_NUMBER/comments?per_page=100" \
+               --paginate > /tmp/trade/comments_raw.json; then
+            echo "::warning::Failed to fetch comments for issue $ISSUE_NUMBER"
+            echo "ready=0" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
 
           python <<'EOF'
+          import json
           from pathlib import Path
-          tsv = Path("/tmp/trade/comments.tsv").read_text() if Path("/tmp/trade/comments.tsv").exists() else ""
+
+          raw = Path("/tmp/trade/comments_raw.json").read_text()
+          comments = json.loads(raw)
+          if len(comments) > 200:
+              print(f"::warning::Truncating {len(comments)} comments to 200")
+              comments = comments[:200]
+
           accepts = []
           seen_users = set()
-          for line in tsv.splitlines():
-              parts = line.split("\t", 1)
-              if len(parts) < 2:
+          for c in comments:
+              body = c.get("body", "")
+              user = c.get("user", {}).get("login", "").lower()
+              assoc = c.get("author_association", "NONE")
+              if assoc == "NONE":
                   continue
-              user, body = parts
-              body = body.replace("\\n", "\n")
               if "/accept" not in body.lower():
                   continue
               if user in seen_users:

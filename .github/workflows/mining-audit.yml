@@ -46,7 +46,9 @@ jobs:
             echo "engine_available=false" >> "$GITHUB_OUTPUT"
             echo "::warning::ENGINE_READ_TOKEN secret not set; mining audit will only self-test."
           else
-            pip install "git+https://x-access-token:${ENGINE_READ_TOKEN}@github.com/aurorasuperbot/daimon.git@v0.2.0"
+            git config --global url."https://x-access-token:${ENGINE_READ_TOKEN}@github.com/".insteadOf "https://github.com/"
+            pip install "git+https://github.com/aurorasuperbot/daimon.git@v2.1.0"
+            git config --global --unset url."https://x-access-token:${ENGINE_READ_TOKEN}@github.com/".insteadOf
             echo "engine_available=true" >> "$GITHUB_OUTPUT"
           fi
 
