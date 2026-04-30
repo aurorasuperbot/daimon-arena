@@ -295,10 +295,19 @@ def verify_phase(
     return errors
 
 
+_REQUIRED_CARD_COUNT = 6
+
+
 def loadout_from_obj(obj: Any) -> Loadout:
     if not isinstance(obj, dict) or "cards" not in obj:
         raise ValueError("loadout must be {'cards': [...]}")
-    cards = tuple(load_card_dict(c) for c in obj["cards"])
+    raw_cards = obj["cards"]
+    if not isinstance(raw_cards, list) or len(raw_cards) != _REQUIRED_CARD_COUNT:
+        raise ValueError(
+            f"loadout must have exactly {_REQUIRED_CARD_COUNT} cards, "
+            f"got {len(raw_cards) if isinstance(raw_cards, list) else type(raw_cards).__name__}"
+        )
+    cards = tuple(load_card_dict(c) for c in raw_cards)
     return Loadout(cards=cards)
 
 
@@ -443,6 +452,8 @@ def write_match_record(arena_root: Path, result: ArbitrationResult) -> Path:
     this function with the same canonical result. Idempotency at this
     layer keeps that safe even if the workflow guard ever drifts.
     """
+    if not isinstance(result.issue_number, int) or result.issue_number <= 0:
+        raise ValueError(f"invalid issue number: {result.issue_number!r}")
     matches_dir = arena_root / "matches"
     matches_dir.mkdir(exist_ok=True)
     path = matches_dir / f"{result.issue_number}.json"
@@ -480,7 +491,9 @@ def update_leaderboard(arena_root: Path, result: ArbitrationResult) -> None:
     else:
         data = {"version": 1, "entries": {}}
 
-    settled = data.setdefault("settled_match_ids", [])
+    raw_settled = data.setdefault("settled_match_ids", [])
+    settled = [int(x) for x in raw_settled if str(x).isdigit()]
+    data["settled_match_ids"] = settled
     if result.issue_number in settled:
         return  # already counted — don't double-credit
 
@@ -502,10 +515,19 @@ def update_leaderboard(arena_root: Path, result: ArbitrationResult) -> None:
 # CLI
 # ---------------------------------------------------------------------------
 
+_MAX_BODY_SIZE = 64 * 1024  # 64 KiB — generous for any legitimate phase body
+
+
 def _read_text(path: Optional[str]) -> str:
     if not path:
         return ""
-    return Path(path).read_text(encoding="utf-8")
+    text = Path(path).read_text(encoding="utf-8")
+    if len(text) > _MAX_BODY_SIZE:
+        raise ValueError(
+            f"input body at {Path(path).name} exceeds {_MAX_BODY_SIZE} bytes "
+            f"({len(text)}); refusing to process"
+        )
+    return text
 
 
 def main() -> int:

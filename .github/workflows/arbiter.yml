@@ -55,7 +55,9 @@ jobs:
   arbitrate:
     if: |
       github.event_name == 'workflow_dispatch' ||
-      (github.event.issue && contains(github.event.issue.labels.*.name, 'match-challenge'))
+      (github.event.issue &&
+       contains(github.event.issue.labels.*.name, 'match-challenge') &&
+       github.event.comment.author_association != 'NONE')
     runs-on: ubuntu-latest
     steps:
       - name: Checkout arena
@@ -76,7 +78,9 @@ jobs:
             echo "::warning::ENGINE_READ_TOKEN secret not set; arbiter will only self-test."
             pip install cryptography
           else
-            pip install "git+https://x-access-token:${ENGINE_READ_TOKEN}@github.com/aurorasuperbot/daimon.git@v2.1.0"
+            git config --global url."https://x-access-token:${ENGINE_READ_TOKEN}@github.com/".insteadOf "https://github.com/"
+            pip install "git+https://github.com/aurorasuperbot/daimon.git@v2.1.0"
+            git config --global --unset url."https://x-access-token:${ENGINE_READ_TOKEN}@github.com/".insteadOf
             echo "engine_available=true" >> "$GITHUB_OUTPUT"
           fi
 
@@ -126,27 +130,52 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           ISSUE_NUMBER: ${{ steps.issue.outputs.number }}
+          REPO: ${{ github.repository }}
         run: |
           mkdir -p /tmp/arbiter
           gh issue view "$ISSUE_NUMBER" --json body --jq .body > /tmp/arbiter/challenge.txt
-          gh api "repos/${{ github.repository }}/issues/$ISSUE_NUMBER/comments" \
-            --paginate > /tmp/arbiter/comments.json || true
+          if ! gh api "repos/$REPO/issues/$ISSUE_NUMBER/comments?per_page=100" \
+               --paginate > /tmp/arbiter/comments_raw.json; then
+            echo "::warning::Failed to fetch comments for issue $ISSUE_NUMBER"
+            echo "ready=0" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
           python <<'EOF'
-          import json
+          import json, sys
           from pathlib import Path
-          raw = Path("/tmp/arbiter/comments.json").read_text() if Path("/tmp/arbiter/comments.json").exists() else "[]"
+
+          raw = Path("/tmp/arbiter/comments_raw.json").read_text()
           comments = json.loads(raw)
+          if len(comments) > 200:
+              print(f"::warning::Truncating {len(comments)} comments to 200")
+              comments = comments[:200]
+
+          challenge_kv = {}
+          chal_text = Path("/tmp/arbiter/challenge.txt").read_text()
+          import re
+          for m in re.finditer(r"^\s*([a-zA-Z_]\w*)\s*:\s*(.+?)\s*$", chal_text, re.MULTILINE):
+              challenge_kv[m.group(1).lower()] = m.group(2)
+          challenger_pk = challenge_kv.get("challenger_pubkey", "").strip().lower()
+          opponent_pk = challenge_kv.get("opponent_pubkey", "").strip().lower()
+
           accept_body = ""
           reveal_bodies = []
           for c in comments:
               body = c.get("body", "")
+              author = c.get("user", {}).get("login", "").lower()
+              assoc = c.get("author_association", "NONE")
               low = body.strip().lower()
+
+              if assoc == "NONE":
+                  continue
+
               if not accept_body and low.startswith("/accept"):
                   accept_body = body
               elif "/reveal" in low and "nonce:" in low and "pubkey:" in low:
                   reveal_bodies.append(body)
                   if len(reveal_bodies) == 2:
                       break
+
           Path("/tmp/arbiter/accept.txt").write_text(accept_body)
           Path("/tmp/arbiter/reveal_1.txt").write_text(reveal_bodies[0] if len(reveal_bodies) >= 1 else "")
           Path("/tmp/arbiter/reveal_2.txt").write_text(reveal_bodies[1] if len(reveal_bodies) >= 2 else "")
