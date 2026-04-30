@@ -130,23 +130,16 @@ jobs:
           mkdir -p /tmp/arbiter
           gh issue view "$ISSUE_NUMBER" --json body --jq .body > /tmp/arbiter/challenge.txt
           gh api "repos/${{ github.repository }}/issues/$ISSUE_NUMBER/comments" \
-            --jq '.[] | "\(.id)\t\(.user.login)\t\(.body | gsub("\n"; "\\n"))"' \
-            > /tmp/arbiter/comments.tsv || true
-          # Find first /accept and collect /reveal comments. Reveals are
-          # written in arrival order — labels are arbitrary because the
-          # arbiter dispatches each reveal to the correct side using the
-          # embedded `pubkey:` field, not the file name.
+            --paginate > /tmp/arbiter/comments.json || true
           python <<'EOF'
+          import json
           from pathlib import Path
-          tsv = Path("/tmp/arbiter/comments.tsv").read_text() if Path("/tmp/arbiter/comments.tsv").exists() else ""
+          raw = Path("/tmp/arbiter/comments.json").read_text() if Path("/tmp/arbiter/comments.json").exists() else "[]"
+          comments = json.loads(raw)
           accept_body = ""
           reveal_bodies = []
-          for line in tsv.splitlines():
-              parts = line.split("\t", 2)
-              if len(parts) < 3:
-                  continue
-              _, user, body = parts
-              body = body.replace("\\n", "\n")
+          for c in comments:
+              body = c.get("body", "")
               low = body.strip().lower()
               if not accept_body and low.startswith("/accept"):
                   accept_body = body
