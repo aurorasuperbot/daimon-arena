@@ -1,0 +1,142 @@
+{
+  "challenger_loadout": {
+    "cards": [
+      {
+        "atk": 5,
+        "card_id": "livesmoke_alice_pos0",
+        "def": 5,
+        "element": "FIRE",
+        "hp": 20,
+        "spd": 5,
+        "species": "smoke_species_0",
+        "triggers": []
+      },
+      {
+        "atk": 5,
+        "card_id": "livesmoke_alice_pos1",
+        "def": 5,
+        "element": "WATER",
+        "hp": 20,
+        "spd": 5,
+        "species": "smoke_species_1",
+        "triggers": []
+      },
+      {
+        "atk": 5,
+        "card_id": "livesmoke_alice_pos2",
+        "def": 5,
+        "element": "NATURE",
+        "hp": 20,
+        "spd": 5,
+        "species": "smoke_species_2",
+        "triggers": []
+      },
+      {
+        "atk": 5,
+        "card_id": "livesmoke_alice_pos3",
+        "def": 5,
+        "element": "VOLT",
+        "hp": 20,
+        "spd": 5,
+        "species": "smoke_species_3",
+        "triggers": []
+      },
+      {
+        "atk": 5,
+        "card_id": "livesmoke_alice_pos4",
+        "def": 5,
+        "element": "VOID",
+        "hp": 20,
+        "spd": 5,
+        "species": "smoke_species_4",
+        "triggers": []
+      },
+      {
+        "atk": 5,
+        "card_id": "livesmoke_alice_pos5",
+        "def": 5,
+        "element": "NORMAL",
+        "hp": 20,
+        "spd": 5,
+        "species": "smoke_species_5",
+        "triggers": []
+      }
+    ]
+  },
+  "challenger_pubkey": "e6e0ad18e0b77664311df02ca1fead880fa0b815499c6a87d38e75dcfc303c2f",
+  "errors": [],
+  "issue_number": 4,
+  "ok": true,
+  "opponent_loadout": {
+    "cards": [
+      {
+        "atk": 5,
+        "card_id": "livesmoke_bob_pos0",
+        "def": 5,
+        "element": "FIRE",
+        "hp": 20,
+        "spd": 5,
+        "species": "smoke_species_0",
+        "triggers": []
+      },
+      {
+        "atk": 5,
+        "card_id": "livesmoke_bob_pos1",
+        "def": 5,
+        "element": "WATER",
+        "hp": 20,
+        "spd": 5,
+        "species": "smoke_species_1",
+        "triggers": []
+      },
+      {
+        "atk": 12,
+        "card_id": "livesmoke_bob_pos2",
+        "def": 5,
+        "element": "NATURE",
+        "hp": 20,
+        "spd": 5,
+        "species": "smoke_species_2",
+        "triggers": []
+      },
+      {
+        "atk": 5,
+        "card_id": "livesmoke_bob_pos3",
+        "def": 5,
+        "element": "VOLT",
+        "hp": 20,
+        "spd": 5,
+        "species": "smoke_species_3",
+        "triggers": []
+      },
+      {
+        "atk": 5,
+        "card_id": "livesmoke_bob_pos4",
+        "def": 5,
+        "element": "VOID",
+        "hp": 20,
+        "spd": 5,
+        "species": "smoke_species_4",
+        "triggers": []
+      },
+      {
+        "atk": 5,
+        "card_id": "livesmoke_bob_pos5",
+        "def": 5,
+        "element": "NORMAL",
+        "hp": 20,
+        "spd": 5,
+        "species": "smoke_species_5",
+        "triggers": []
+      }
+    ]
+  },
+  "opponent_pubkey": "979dfdedb335a9136ae7e5a48230bf66c404a0ab853dd96fc1b441f7ad724d8a",
+  "reason": "wipe",
+  "round_count": 18,
+  "seed_hex": "af9f0cf43553a2cbeb433c0cb760682e8391bd828cb0c364d8d5495550ca9fba",
+  "side_a_final_hp": 0,
+  "side_b_final_hp": 120,
+  "timestamp_utc": "2026-04-30T05:05:22.057263+00:00",
+  "winner": 1
+}

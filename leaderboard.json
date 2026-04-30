@@ -1,7 +1,20 @@
 {
-  "entries": {},
-  "last_updated": "2026-04-27T19:15:00.000000+00:00",
+  "entries": {
+    "979dfdedb335a9136ae7e5a48230bf66c404a0ab853dd96fc1b441f7ad724d8a": {
+      "draws": 0,
+      "losses": 0,
+      "wins": 1
+    },
+    "e6e0ad18e0b77664311df02ca1fead880fa0b815499c6a87d38e75dcfc303c2f": {
+      "draws": 0,
+      "losses": 1,
+      "wins": 0
+    }
+  },
+  "last_updated": "2026-04-30T05:05:22.061994+00:00",
   "rankings": [],
   "schema_version": 1,
-  "settled_match_ids": []
+  "settled_match_ids": [
+    4
+  ]
 }
