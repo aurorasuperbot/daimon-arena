@@ -10,6 +10,7 @@ Templates this script knows about (label-driven, see config below):
   trade-offer:      offerer_pubkey, counterparty_handle, offering, wanting, expires_at?
   dispute-appeal:   pubkey, subject, claim, evidence
   card-proposal:    name, stats, triggers, justification (slot is template-ambiguous post-monster-pivot)
+  identity:         pubkey_hex, handle, github_username, signed_at, signature, protocol
 
 Validation tiers (most → least strict):
   1. Pubkey hex fields: 64-char ed25519 hex (no 0x prefix, lowercase normalized)
@@ -227,6 +228,37 @@ def _validate_dispute_appeal(body: str) -> Tuple[List[str], List[str]]:
     return errors, warnings
 
 
+def _validate_identity(body: str) -> Tuple[List[str], List[str]]:
+    errors: List[str] = []
+    warnings: List[str] = []
+    kv = parse_kv(body)
+
+    for required in ("pubkey_hex", "handle", "github_username", "signed_at",
+                      "signature", "protocol"):
+        if required not in kv:
+            errors.append(f"missing required field: {required}")
+
+    if "pubkey_hex" in kv:
+        e = _check_hex64(kv["pubkey_hex"], "pubkey_hex")
+        if e:
+            errors.append(e)
+
+    if "signature" in kv:
+        sig = kv["signature"].strip()
+        if not re.match(r"^[0-9a-fA-F]{128}$", sig):
+            errors.append(f"signature: expected 128-char hex (ed25519 sig), got {len(sig)} chars")
+
+    if "signed_at" in kv:
+        e = _check_iso8601(kv["signed_at"], "signed_at")
+        if e:
+            errors.append(e)
+
+    if "protocol" in kv and kv["protocol"].strip() != "daimon-register-v1":
+        errors.append(f"protocol: expected daimon-register-v1, got {kv['protocol']!r}")
+
+    return errors, warnings
+
+
 def _validate_card_proposal(body: str) -> Tuple[List[str], List[str]]:
     errors: List[str] = []
     warnings: List[str] = []
@@ -266,6 +298,7 @@ VALIDATORS = {
     "trade-offer": _validate_trade_offer,
     "dispute-appeal": _validate_dispute_appeal,
     "card-proposal": _validate_card_proposal,
+    "identity": _validate_identity,
 }
 
 
@@ -406,6 +439,32 @@ def _run_self_test() -> int:
     if r["label"] != "invalid":
         failures.append(f"card-proposal bad stats accepted: {r}")
 
+    # identity happy path
+    happy_identity = (
+        "pubkey_hex: " + "a" * 64 + "\n"
+        "handle: alice\n"
+        "github_username: alice\n"
+        "github_id: 12345\n"
+        "signed_at: 2026-05-01T00:00:00+00:00\n"
+        "signature: " + "b" * 128 + "\n"
+        "protocol: daimon-register-v1\n"
+    )
+    r = validate(happy_identity, ["identity"])
+    if r["label"] != "valid":
+        failures.append(f"identity happy path failed: {r}")
+
+    # identity missing pubkey
+    bad_identity = (
+        "handle: alice\n"
+        "github_username: alice\n"
+        "signed_at: 2026-05-01T00:00:00+00:00\n"
+        "signature: " + "b" * 128 + "\n"
+        "protocol: daimon-register-v1\n"
+    )
+    r = validate(bad_identity, ["identity"])
+    if r["label"] != "invalid" or "pubkey_hex" not in str(r["errors"]):
+        failures.append(f"identity missing pubkey failed: {r}")
+
     # No recognized label → skip
     r = validate(happy_match, ["bug-report", "needs-triage"])
     if r["label"] != "skip":
@@ -416,7 +475,7 @@ def _run_self_test() -> int:
             print(f"FAIL: {f}", file=sys.stderr)
         return 1
 
-    print("validate_issue self-test: OK (8/8 cases passed)")
+    print("validate_issue self-test: OK (10/10 cases passed)")
     return 0
 
 

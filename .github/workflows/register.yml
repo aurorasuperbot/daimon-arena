@@ -1,0 +1,152 @@
+name: Register
+
+# Triggered when an Issue with the `identity` label is opened. Calls
+# scripts/register.py to verify the ed25519 signature, create
+# players/{username}.json, and bootstrap economic state in
+# state/{username}/.
+#
+# The validator workflow (validator.yml) runs in parallel on the same
+# `issues: opened` event and checks the Issue body schema. This workflow
+# only proceeds if the engine is available and the body is well-formed.
+
+on:
+  issues:
+    types: [opened]
+
+permissions:
+  contents: write
+  issues: write
+
+concurrency:
+  group: register-${{ github.event.issue.number }}
+  cancel-in-progress: false
+
+jobs:
+  register:
+    if: contains(github.event.issue.labels.*.name, 'identity')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout arena
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install daimon engine
+        id: install_engine
+        env:
+          ENGINE_READ_TOKEN: ${{ secrets.ENGINE_READ_TOKEN }}
+        run: |
+          if [ -z "$ENGINE_READ_TOKEN" ]; then
+            echo "engine_available=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::ENGINE_READ_TOKEN secret not set; registration requires engine."
+            pip install cryptography
+          else
+            git config --global url."https://x-access-token:${ENGINE_READ_TOKEN}@github.com/".insteadOf "https://github.com/"
+            pip install "git+https://github.com/aurorasuperbot/daimon.git@v2.1.0"
+            git config --global --unset url."https://x-access-token:${ENGINE_READ_TOKEN}@github.com/".insteadOf
+            echo "engine_available=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Self-test
+        if: steps.install_engine.outputs.engine_available == 'true'
+        run: python scripts/register.py --self-test
+
+      - name: Sync to latest main
+        if: steps.install_engine.outputs.engine_available == 'true'
+        run: |
+          git fetch origin main
+          git reset --hard origin/main
+
+      - name: Fetch Issue body + author
+        id: fetch
+        if: steps.install_engine.outputs.engine_available == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+        run: |
+          mkdir -p /tmp/register
+          gh issue view "$ISSUE_NUMBER" --json body --jq .body > /tmp/register/body.txt
+          AUTHOR=$(gh issue view "$ISSUE_NUMBER" --json author --jq .author.login)
+          echo "author=$AUTHOR" >> "$GITHUB_OUTPUT"
+
+      - name: Process registration
+        id: register
+        if: steps.install_engine.outputs.engine_available == 'true'
+        env:
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+          AUTHOR: ${{ steps.fetch.outputs.author }}
+        run: |
+          python scripts/register.py \
+            --issue-number "$ISSUE_NUMBER" \
+            --issue-author "$AUTHOR" \
+            --body-file /tmp/register/body.txt \
+            --arena-root . \
+            > /tmp/register/result.json
+          cat /tmp/register/result.json
+          OK=$(jq -r .ok /tmp/register/result.json)
+          ACTION=$(jq -r '.action // ""' /tmp/register/result.json)
+          MSG=$(jq -r '.message // ""' /tmp/register/result.json)
+          echo "ok=$OK" >> "$GITHUB_OUTPUT"
+          echo "action=$ACTION" >> "$GITHUB_OUTPUT"
+          {
+            echo "message<<__EOF__"
+            echo "$MSG"
+            echo "__EOF__"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Commit + close on success
+        if: steps.register.outputs.ok == 'true' && steps.register.outputs.action == 'registered'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+          AUTHOR: ${{ steps.fetch.outputs.author }}
+        run: |
+          git config user.name  "daimon-arbiter[bot]"
+          git config user.email "arbiter@aurorasuperbot.local"
+          git add players/ state/
+          if ! git diff --cached --quiet; then
+            git commit -m "register: $AUTHOR (#$ISSUE_NUMBER)"
+            for attempt in 1 2 3; do
+              if git push; then
+                echo "::notice::registration pushed on attempt $attempt"
+                break
+              fi
+              echo "::warning::push attempt $attempt rejected; rebasing"
+              git pull --rebase origin main
+              [ $attempt -eq 3 ] && exit 1
+            done
+          fi
+          gh issue comment "$ISSUE_NUMBER" \
+            --body "Registration confirmed. Welcome to the arena, @$AUTHOR! Your genesis balance is 300¤." \
+            || true
+          gh issue edit "$ISSUE_NUMBER" --add-label "registered" --remove-label "pending-arbiter" || true
+          gh issue lock "$ISSUE_NUMBER" --reason resolved || true
+          gh issue close "$ISSUE_NUMBER" --reason completed || true
+
+      - name: Already registered — close
+        if: steps.register.outputs.ok == 'true' && steps.register.outputs.action == 'already_registered'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+        run: |
+          gh issue comment "$ISSUE_NUMBER" \
+            --body "Already registered with this pubkey. No changes made." \
+            || true
+          gh issue edit "$ISSUE_NUMBER" --add-label "registered" --remove-label "pending-arbiter" || true
+          gh issue close "$ISSUE_NUMBER" --reason "not planned" || true
+
+      - name: Registration rejected — comment + close
+        if: steps.register.outputs.ok == 'false'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+          MESSAGE: ${{ steps.register.outputs.message }}
+        run: |
+          gh issue comment "$ISSUE_NUMBER" \
+            --body "Registration rejected: $MESSAGE" \
+            || true
+          gh issue edit "$ISSUE_NUMBER" --add-label "rejected" --remove-label "pending-arbiter" || true
+          gh issue close "$ISSUE_NUMBER" --reason "not planned" || true
