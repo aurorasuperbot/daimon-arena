@@ -289,6 +289,33 @@ def _validate_card_proposal(body: str) -> Tuple[List[str], List[str]]:
     return errors, warnings
 
 
+def _validate_pull_claim(body: str) -> tuple:
+    errors, warnings = [], []
+    kv = parse_kv(body)
+
+    required = ["github_username", "pubkey_hex", "ticket_index",
+                 "claimed_at", "signature", "protocol"]
+    for field in required:
+        if field not in kv:
+            errors.append(f"missing required field: {field}")
+
+    if "pubkey_hex" in kv and not _HEX64.match(kv["pubkey_hex"]):
+        errors.append("pubkey_hex must be 64 hex chars")
+
+    if "ticket_index" in kv:
+        try:
+            idx = int(kv["ticket_index"])
+            if idx < 0:
+                errors.append("ticket_index must be non-negative")
+        except ValueError:
+            errors.append("ticket_index must be an integer")
+
+    if "protocol" in kv and kv["protocol"] != "daimon-pull-claim-v1":
+        errors.append(f"unexpected protocol: {kv['protocol']}")
+
+    return errors, warnings
+
+
 # ---------------------------------------------------------------------------
 # Dispatch — label drives which validator runs
 # ---------------------------------------------------------------------------
@@ -299,6 +326,7 @@ VALIDATORS = {
     "dispute-appeal": _validate_dispute_appeal,
     "card-proposal": _validate_card_proposal,
     "identity": _validate_identity,
+    "pull-claim": _validate_pull_claim,
 }
 
 
@@ -465,6 +493,33 @@ def _run_self_test() -> int:
     if r["label"] != "invalid" or "pubkey_hex" not in str(r["errors"]):
         failures.append(f"identity missing pubkey failed: {r}")
 
+    # pull-claim happy path
+    happy_claim = (
+        "claim_type: pull\n"
+        "github_username: alice\n"
+        "pubkey_hex: " + "a" * 64 + "\n"
+        "ticket_index: 0\n"
+        "claimed_at: 2026-05-01T00:00:00+00:00\n"
+        "signature: " + "b" * 128 + "\n"
+        "protocol: daimon-pull-claim-v1\n"
+    )
+    r = validate(happy_claim, ["pull-claim"])
+    if r["label"] != "valid":
+        failures.append(f"pull-claim happy path failed: {r}")
+
+    # pull-claim missing signature
+    bad_claim = (
+        "claim_type: pull\n"
+        "github_username: alice\n"
+        "pubkey_hex: " + "a" * 64 + "\n"
+        "ticket_index: 0\n"
+        "claimed_at: 2026-05-01T00:00:00+00:00\n"
+        "protocol: daimon-pull-claim-v1\n"
+    )
+    r = validate(bad_claim, ["pull-claim"])
+    if r["label"] != "invalid" or "signature" not in str(r["errors"]):
+        failures.append(f"pull-claim missing signature failed: {r}")
+
     # No recognized label → skip
     r = validate(happy_match, ["bug-report", "needs-triage"])
     if r["label"] != "skip":
@@ -475,7 +530,7 @@ def _run_self_test() -> int:
             print(f"FAIL: {f}", file=sys.stderr)
         return 1
 
-    print("validate_issue self-test: OK (10/10 cases passed)")
+    print("validate_issue self-test: OK (12/12 cases passed)")
     return 0
 
 

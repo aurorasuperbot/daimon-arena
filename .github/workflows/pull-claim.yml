@@ -1,0 +1,143 @@
+name: Pull Claim
+
+# Triggered when an Issue with the `pull-claim` label is opened.
+# Verifies the player's signature, enforces sequential claiming,
+# deducts balance, updates collection, and increments next_claim_index.
+
+on:
+  issues:
+    types: [opened]
+
+permissions:
+  contents: write
+  issues: write
+
+concurrency:
+  group: arbiter-state-writer
+  cancel-in-progress: false
+
+jobs:
+  claim:
+    if: contains(github.event.issue.labels.*.name, 'pull-claim')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout arena
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install daimon engine
+        env:
+          ENGINE_READ_TOKEN: ${{ secrets.ENGINE_READ_TOKEN }}
+        run: |
+          if [ -z "$ENGINE_READ_TOKEN" ]; then
+            echo "::error::ENGINE_READ_TOKEN secret not set"
+            exit 1
+          fi
+          git config --global url."https://x-access-token:${ENGINE_READ_TOKEN}@github.com/".insteadOf "https://github.com/"
+          pip install "git+https://github.com/aurorasuperbot/daimon.git@v2.1.0"
+          git config --global --unset url."https://x-access-token:${ENGINE_READ_TOKEN}@github.com/".insteadOf
+
+      - name: Self-test
+        run: python scripts/process_pull_claim.py --self-test
+
+      - name: Sync to latest main
+        run: |
+          git fetch origin main
+          git reset --hard origin/main
+
+      - name: Fetch Issue body + author
+        id: fetch
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+        run: |
+          mkdir -p /tmp/claim
+          gh issue view "$ISSUE_NUMBER" --json body --jq .body > /tmp/claim/body.txt
+          AUTHOR=$(gh issue view "$ISSUE_NUMBER" --json author --jq .author.login)
+          echo "author=$AUTHOR" >> "$GITHUB_OUTPUT"
+
+      - name: Process claim
+        id: claim
+        env:
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+          AUTHOR: ${{ steps.fetch.outputs.author }}
+        run: |
+          python scripts/process_pull_claim.py \
+            --issue-number "$ISSUE_NUMBER" \
+            --issue-author "$AUTHOR" \
+            --body-file /tmp/claim/body.txt \
+            --arena-root . \
+            > /tmp/claim/result.json
+          cat /tmp/claim/result.json
+          OK=$(jq -r .ok /tmp/claim/result.json)
+          CARD=$(jq -r '.card_id // ""' /tmp/claim/result.json)
+          COST=$(jq -r '.cost // ""' /tmp/claim/result.json)
+          BALANCE=$(jq -r '.balance_after // ""' /tmp/claim/result.json)
+          MSG=$(jq -r '.message // ""' /tmp/claim/result.json)
+          echo "ok=$OK" >> "$GITHUB_OUTPUT"
+          echo "card=$CARD" >> "$GITHUB_OUTPUT"
+          echo "cost=$COST" >> "$GITHUB_OUTPUT"
+          echo "balance=$BALANCE" >> "$GITHUB_OUTPUT"
+          {
+            echo "message<<__EOF__"
+            echo "$MSG"
+            echo "__EOF__"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Commit + close on success
+        if: steps.claim.outputs.ok == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+          AUTHOR: ${{ steps.fetch.outputs.author }}
+          CARD: ${{ steps.claim.outputs.card }}
+          COST: ${{ steps.claim.outputs.cost }}
+          BALANCE: ${{ steps.claim.outputs.balance }}
+        run: |
+          git config user.name  "daimon-arbiter[bot]"
+          git config user.email "arbiter@aurorasuperbot.local"
+          git add state/
+          if ! git diff --cached --quiet; then
+            git commit -m "pull-claim: $AUTHOR — $CARD (#$ISSUE_NUMBER)"
+            for attempt in 1 2 3; do
+              if git push; then
+                echo "::notice::claim pushed on attempt $attempt"
+                break
+              fi
+              echo "::warning::push attempt $attempt rejected; rebasing"
+              git pull --rebase origin main
+              [ $attempt -eq 3 ] && exit 1
+            done
+          fi
+          gh issue comment "$ISSUE_NUMBER" \
+            --body "Pull confirmed! You got **$CARD** (−${COST}¤, balance: ${BALANCE}¤)." \
+            || true
+          gh issue edit "$ISSUE_NUMBER" --add-label "claimed" --remove-label "pending-arbiter" || true
+          gh issue lock "$ISSUE_NUMBER" --reason resolved || true
+          gh issue close "$ISSUE_NUMBER" --reason completed || true
+
+          # Trigger ticket refill if pool is getting low
+          PENDING=$(jq '.tickets | length' "state/$AUTHOR/tickets/pending.json" 2>/dev/null || echo 0)
+          NEXT=$(jq '.next_claim_index' "state/$AUTHOR/tickets/pending.json" 2>/dev/null || echo 0)
+          UNCLAIMED=$((PENDING - NEXT))
+          if [ "$UNCLAIMED" -lt 5 ]; then
+            gh api repos/${{ github.repository }}/dispatches \
+              -f event_type=ticket-refill || true
+          fi
+
+      - name: Claim rejected — comment + close
+        if: steps.claim.outputs.ok == 'false'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+          MESSAGE: ${{ steps.claim.outputs.message }}
+        run: |
+          gh issue comment "$ISSUE_NUMBER" \
+            --body "Pull claim rejected: $MESSAGE" \
+            || true
+          gh issue edit "$ISSUE_NUMBER" --add-label "rejected" --remove-label "pending-arbiter" || true
+          gh issue close "$ISSUE_NUMBER" --reason "not planned" || true

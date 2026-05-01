@@ -1,0 +1,6 @@
+{
+  "pubkey_hex": "878d6c37bf02e8d8667d09ac1c6d40744bb40b834ca05c1cb5d8863044773af4",
+  "algorithm": "ed25519",
+  "purpose": "Arbiter ticket signing key. Verify pull ticket signatures against this pubkey.",
+  "version": 1
+}

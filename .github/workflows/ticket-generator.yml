@@ -1,0 +1,85 @@
+name: Ticket Generator
+
+# Pre-mint encrypted pull tickets for all registered players.
+# Runs on schedule (every 6 hours), manual dispatch, or
+# repository_dispatch (triggered after pull claims deplete the pool).
+
+on:
+  schedule:
+    - cron: "0 */6 * * *"   # every 6 hours
+  workflow_dispatch:
+  repository_dispatch:
+    types: [ticket-refill]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: ticket-generator
+  cancel-in-progress: false
+
+jobs:
+  generate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout arena
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install daimon engine
+        env:
+          ENGINE_READ_TOKEN: ${{ secrets.ENGINE_READ_TOKEN }}
+        run: |
+          if [ -z "$ENGINE_READ_TOKEN" ]; then
+            echo "::error::ENGINE_READ_TOKEN secret not set"
+            exit 1
+          fi
+          git config --global url."https://x-access-token:${ENGINE_READ_TOKEN}@github.com/".insteadOf "https://github.com/"
+          pip install "git+https://github.com/aurorasuperbot/daimon.git@v2.1.0"
+          git config --global --unset url."https://x-access-token:${ENGINE_READ_TOKEN}@github.com/".insteadOf
+
+      - name: Self-test
+        run: python scripts/generate_tickets.py --self-test
+
+      - name: Sync to latest main
+        run: |
+          git fetch origin main
+          git reset --hard origin/main
+
+      - name: Generate tickets
+        env:
+          ARBITER_PRIVATE_KEY: ${{ secrets.ARBITER_PRIVATE_KEY }}
+        run: |
+          if [ -z "$ARBITER_PRIVATE_KEY" ]; then
+            echo "::error::ARBITER_PRIVATE_KEY secret not set"
+            exit 1
+          fi
+          python scripts/generate_tickets.py \
+            --arbiter-key-hex "$ARBITER_PRIVATE_KEY" \
+            --arena-root . \
+            --min-unclaimed 10 \
+            --batch-size 20
+
+      - name: Commit + push
+        run: |
+          git config user.name  "daimon-arbiter[bot]"
+          git config user.email "arbiter@aurorasuperbot.local"
+          git add state/
+          if ! git diff --cached --quiet; then
+            git commit -m "tickets: replenish pull tickets ($(date -u +%Y-%m-%dT%H:%M:%SZ))"
+            for attempt in 1 2 3; do
+              if git push; then
+                echo "::notice::tickets pushed on attempt $attempt"
+                break
+              fi
+              echo "::warning::push attempt $attempt rejected; rebasing"
+              git pull --rebase origin main
+              [ $attempt -eq 3 ] && exit 1
+            done
+          else
+            echo "::notice::no new tickets to commit (all pools full)"
+          fi
