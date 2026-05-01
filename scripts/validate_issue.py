@@ -365,6 +365,41 @@ def _validate_tier_claim(body: str) -> tuple:
     return errors, warnings
 
 
+def _validate_migration(body: str) -> tuple:
+    errors, warnings = [], []
+    kv = parse_kv(body)
+
+    required = ["github_username", "pubkey_hex", "balance",
+                "collection_hash", "migrated_at", "signature", "protocol"]
+    for field in required:
+        if field not in kv:
+            errors.append(f"missing required field: {field}")
+
+    if "pubkey_hex" in kv and not _HEX64.match(kv["pubkey_hex"]):
+        errors.append("pubkey_hex must be 64 hex chars")
+
+    if "balance" in kv:
+        try:
+            b = int(kv["balance"])
+            if b < 0:
+                errors.append("balance must be non-negative")
+        except ValueError:
+            errors.append("balance must be an integer")
+
+    if "collection_hash" in kv and not _HEX64.match(kv["collection_hash"]):
+        errors.append("collection_hash must be 64 hex chars")
+
+    if "protocol" in kv and kv["protocol"] != "daimon-migration-v1":
+        errors.append(f"unexpected protocol: {kv['protocol']}")
+
+    # Check for JSON block
+    import re as _re
+    if not _re.search(r"```json\s*\n.*?\n\s*```", body, _re.DOTALL):
+        errors.append("missing JSON code block with collection data")
+
+    return errors, warnings
+
+
 # ---------------------------------------------------------------------------
 # Dispatch — label drives which validator runs
 # ---------------------------------------------------------------------------
@@ -378,6 +413,7 @@ VALIDATORS = {
     "pull-claim": _validate_pull_claim,
     "quest-claim": _validate_quest_claim,
     "tier-claim": _validate_tier_claim,
+    "migration": _validate_migration,
 }
 
 
