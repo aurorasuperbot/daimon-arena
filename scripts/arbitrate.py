@@ -321,6 +321,7 @@ def arbitrate(
     accept_body: str,
     reveal_1_body: str,
     reveal_2_body: str,
+    arena_root: Optional[Path] = None,
 ) -> ArbitrationResult:
     """Resolve a PvP match.
 
@@ -406,6 +407,18 @@ def arbitrate(
         result.reason = "invalid_loadout"
         result.errors.append(str(e))
         return result
+
+    # Validate loadout ownership (Phase 5)
+    if arena_root is not None:
+        ownership_errors = _validate_loadout_ownership(
+            arena_root, challenge.challenger_pubkey, challenger_reveal.loadout, "challenger"
+        ) + _validate_loadout_ownership(
+            arena_root, accept.opponent_pubkey, opponent_reveal.loadout, "opponent"
+        )
+        if ownership_errors:
+            result.reason = "unowned_cards"
+            result.errors.extend(ownership_errors)
+            return result
 
     # Derive joint seed (deterministic, neither side can grind).
     # Note: nonces are bound to (challenger, opponent) sides — NOT to comment
@@ -509,6 +522,53 @@ def update_leaderboard(arena_root: Path, result: ArbitrationResult) -> None:
     settled.sort()  # canonical order — easier diff on the committed file
     data["last_updated"] = dt.datetime.now(dt.timezone.utc).isoformat()
     lb_path.write_text(json.dumps(data, indent=2, sort_keys=True))
+
+
+# ---------------------------------------------------------------------------
+# Loadout ownership validation (Phase 5)
+# ---------------------------------------------------------------------------
+
+
+def _validate_loadout_ownership(
+    arena_root: Path,
+    pubkey_hex: str,
+    loadout_obj: Dict[str, Any],
+    side_label: str,
+) -> List[str]:
+    """Check that every card in a loadout is owned by the player.
+
+    Returns a list of error strings (empty = all valid).
+    Counts duplicates: if a player owns 1 flame_imp but uses 2, the second
+    is flagged.
+    """
+    from collections import Counter
+
+    username = _pubkey_to_username(arena_root, pubkey_hex)
+    if username is None:
+        return [f"{side_label}: player {pubkey_hex[:16]}... not registered"]
+
+    col_file = arena_root / "state" / username / "collection.json"
+    if not col_file.exists():
+        return [f"{side_label}: no collection file for {username}"]
+
+    col = json.loads(col_file.read_text())
+    owned_ids = col.get("card_ids", [])
+    owned_counts = Counter(owned_ids)
+
+    cards = loadout_obj.get("cards", [])
+    used_counts: Counter = Counter()
+    errors: List[str] = []
+
+    for card in cards:
+        cid = card.get("card_id", "")
+        used_counts[cid] += 1
+        if used_counts[cid] > owned_counts.get(cid, 0):
+            errors.append(
+                f"{side_label}: {username} does not own enough copies of '{cid}' "
+                f"(owns {owned_counts.get(cid, 0)}, needs {used_counts[cid]})"
+            )
+
+    return errors
 
 
 # ---------------------------------------------------------------------------
@@ -652,6 +712,7 @@ def main() -> int:
         _read_text(args.accept_body),
         _read_text(args.reveal_1_body),
         _read_text(args.reveal_2_body),
+        arena_root=Path(args.arena_root),
     )
 
     print(json.dumps(result.to_record(), indent=2, sort_keys=True))
@@ -782,6 +843,53 @@ signature: {sig_a}
               f"reason={result2.reason}")
         return 1
     print(f"PASS: tamper detected -> {result2.errors[0]}")
+
+    # Ownership validation test (Phase 5)
+    import tempfile
+    with tempfile.TemporaryDirectory() as td:
+        arena = Path(td)
+        (arena / "players").mkdir()
+        (arena / "players" / "alice.json").write_text(json.dumps({
+            "github_username": "alice", "pubkey_hex": pubkey_a,
+        }))
+        (arena / "players" / "bob.json").write_text(json.dumps({
+            "github_username": "bob", "pubkey_hex": pubkey_b,
+        }))
+        state_a = arena / "state" / "alice"
+        state_a.mkdir(parents=True)
+        state_b = arena / "state" / "bob"
+        state_b.mkdir(parents=True)
+
+        # Alice owns all her cards, Bob owns all his
+        alice_ids = [c["card_id"] for c in loadout_a["cards"]]
+        bob_ids = [c["card_id"] for c in loadout_b["cards"]]
+        (state_a / "collection.json").write_text(json.dumps({
+            "serials": [], "card_ids": alice_ids,
+        }))
+        (state_b / "collection.json").write_text(json.dumps({
+            "serials": [], "card_ids": bob_ids,
+        }))
+
+        # Valid match: both own their cards
+        r_owned = arbitrate(issue, challenge_body, accept_body,
+                            reveal_a_body, reveal_b_body, arena_root=arena)
+        if not r_owned.ok:
+            print(f"FAIL (ownership valid): expected ok, got {r_owned.errors}")
+            return 1
+        print("PASS: ownership validation accepts valid loadouts")
+
+        # Remove one card from Alice's collection
+        (state_a / "collection.json").write_text(json.dumps({
+            "serials": [], "card_ids": alice_ids[1:],
+        }))
+        r_unowned = arbitrate(issue, challenge_body, accept_body,
+                              reveal_a_body, reveal_b_body, arena_root=arena)
+        if r_unowned.ok or r_unowned.reason != "unowned_cards":
+            print(f"FAIL (ownership invalid): expected unowned_cards, "
+                  f"got ok={r_unowned.ok} reason={r_unowned.reason}")
+            return 1
+        print(f"PASS: ownership validation rejects unowned card -> {r_unowned.errors[0]}")
+
     return 0
 
 

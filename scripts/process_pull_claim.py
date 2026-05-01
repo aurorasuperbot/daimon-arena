@@ -207,10 +207,12 @@ def process_pull_claim(
     balance_data["balance"] = balance - cost
     balance_file.write_text(json.dumps(balance_data, indent=2))
 
-    # 2. Append serial to collection
+    # 2. Append to collection (both serials list for legacy and cards list for validation)
     collection_file = state_dir / "collection.json"
-    collection = json.loads(collection_file.read_text()) if collection_file.exists() else {"serials": []}
+    collection = json.loads(collection_file.read_text()) if collection_file.exists() else {"serials": [], "card_ids": []}
+    collection.setdefault("card_ids", [])
     collection["serials"].append(serial)
+    collection["card_ids"].append(card_id)
     collection_file.write_text(json.dumps(collection, indent=2))
 
     # 3. Increment next_claim_index
@@ -290,6 +292,7 @@ protocol: {PROTOCOL_VERSION_PULL_CLAIM}"""
         assert bal["balance"] == 300
         col = json.loads((state / "collection.json").read_text())
         assert "s-001" in col["serials"]
+        assert "flame_imp" in col["card_ids"]
         pend = json.loads((state / "tickets" / "pending.json").read_text())
         assert pend["next_claim_index"] == 1
 
