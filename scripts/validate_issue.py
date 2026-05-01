@@ -316,6 +316,55 @@ def _validate_pull_claim(body: str) -> tuple:
     return errors, warnings
 
 
+def _validate_quest_claim(body: str) -> tuple:
+    errors, warnings = [], []
+    kv = parse_kv(body)
+
+    required = ["github_username", "pubkey_hex", "quest_id",
+                "quest_date", "claimed_at", "signature", "protocol"]
+    for field in required:
+        if field not in kv:
+            errors.append(f"missing required field: {field}")
+
+    if "pubkey_hex" in kv and not _HEX64.match(kv["pubkey_hex"]):
+        errors.append("pubkey_hex must be 64 hex chars")
+
+    if "quest_date" in kv:
+        import datetime as _dt
+        try:
+            _dt.date.fromisoformat(kv["quest_date"])
+        except ValueError:
+            errors.append("quest_date must be YYYY-MM-DD")
+
+    if "protocol" in kv and kv["protocol"] != "daimon-quest-claim-v1":
+        errors.append(f"unexpected protocol: {kv['protocol']}")
+
+    return errors, warnings
+
+
+def _validate_tier_claim(body: str) -> tuple:
+    errors, warnings = [], []
+    kv = parse_kv(body)
+
+    required = ["github_username", "pubkey_hex", "tier",
+                "claimed_at", "signature", "protocol"]
+    for field in required:
+        if field not in kv:
+            errors.append(f"missing required field: {field}")
+
+    if "pubkey_hex" in kv and not _HEX64.match(kv["pubkey_hex"]):
+        errors.append("pubkey_hex must be 64 hex chars")
+
+    valid_tiers = {"Novice", "Veteran", "Elite", "Champion"}
+    if "tier" in kv and kv["tier"] not in valid_tiers:
+        errors.append(f"tier must be one of {sorted(valid_tiers)}")
+
+    if "protocol" in kv and kv["protocol"] != "daimon-tier-claim-v1":
+        errors.append(f"unexpected protocol: {kv['protocol']}")
+
+    return errors, warnings
+
+
 # ---------------------------------------------------------------------------
 # Dispatch — label drives which validator runs
 # ---------------------------------------------------------------------------
@@ -327,6 +376,8 @@ VALIDATORS = {
     "card-proposal": _validate_card_proposal,
     "identity": _validate_identity,
     "pull-claim": _validate_pull_claim,
+    "quest-claim": _validate_quest_claim,
+    "tier-claim": _validate_tier_claim,
 }
 
 

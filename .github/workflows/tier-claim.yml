@@ -1,0 +1,133 @@
+name: Tier Claim
+
+# Triggered when an Issue with the `tier-claim` label is opened.
+# Checks leaderboard wins, verifies tier earned, credits reward.
+
+on:
+  issues:
+    types: [opened]
+
+permissions:
+  contents: write
+  issues: write
+
+concurrency:
+  group: arbiter-state-writer
+  cancel-in-progress: false
+
+jobs:
+  claim:
+    if: contains(github.event.issue.labels.*.name, 'tier-claim')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout arena
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install daimon engine
+        env:
+          ENGINE_READ_TOKEN: ${{ secrets.ENGINE_READ_TOKEN }}
+        run: |
+          if [ -z "$ENGINE_READ_TOKEN" ]; then
+            echo "::error::ENGINE_READ_TOKEN secret not set"
+            exit 1
+          fi
+          git config --global url."https://x-access-token:${ENGINE_READ_TOKEN}@github.com/".insteadOf "https://github.com/"
+          pip install "git+https://github.com/aurorasuperbot/daimon.git@v2.2.0"
+          git config --global --unset url."https://x-access-token:${ENGINE_READ_TOKEN}@github.com/".insteadOf
+
+      - name: Self-test
+        run: python scripts/process_tier_claim.py --self-test
+
+      - name: Sync to latest main
+        run: |
+          git fetch origin main
+          git reset --hard origin/main
+
+      - name: Fetch Issue body + author
+        id: fetch
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+        run: |
+          mkdir -p /tmp/claim
+          gh issue view "$ISSUE_NUMBER" --json body --jq .body > /tmp/claim/body.txt
+          AUTHOR=$(gh issue view "$ISSUE_NUMBER" --json author --jq .author.login)
+          echo "author=$AUTHOR" >> "$GITHUB_OUTPUT"
+
+      - name: Process claim
+        id: claim
+        env:
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+          AUTHOR: ${{ steps.fetch.outputs.author }}
+        run: |
+          python scripts/process_tier_claim.py \
+            --issue-number "$ISSUE_NUMBER" \
+            --issue-author "$AUTHOR" \
+            --body-file /tmp/claim/body.txt \
+            --arena-root . \
+            > /tmp/claim/result.json
+          cat /tmp/claim/result.json
+          OK=$(jq -r .ok /tmp/claim/result.json)
+          TIERS=$(jq -r '.tiers_claimed // [] | join(", ")' /tmp/claim/result.json)
+          REWARD=$(jq -r '.total_reward // ""' /tmp/claim/result.json)
+          BALANCE=$(jq -r '.balance_after // ""' /tmp/claim/result.json)
+          MSG=$(jq -r '.message // ""' /tmp/claim/result.json)
+          echo "ok=$OK" >> "$GITHUB_OUTPUT"
+          echo "tiers=$TIERS" >> "$GITHUB_OUTPUT"
+          echo "reward=$REWARD" >> "$GITHUB_OUTPUT"
+          echo "balance=$BALANCE" >> "$GITHUB_OUTPUT"
+          {
+            echo "message<<__EOF__"
+            echo "$MSG"
+            echo "__EOF__"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Commit + close on success
+        if: steps.claim.outputs.ok == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+          AUTHOR: ${{ steps.fetch.outputs.author }}
+          TIERS: ${{ steps.claim.outputs.tiers }}
+          REWARD: ${{ steps.claim.outputs.reward }}
+          BALANCE: ${{ steps.claim.outputs.balance }}
+        run: |
+          git config user.name  "daimon-arbiter[bot]"
+          git config user.email "arbiter@aurorasuperbot.local"
+          git add state/
+          if ! git diff --cached --quiet; then
+            git commit -m "tier-claim: $AUTHOR — $TIERS +${REWARD}¤ (#$ISSUE_NUMBER)"
+            for attempt in 1 2 3; do
+              if git push; then
+                echo "::notice::claim pushed on attempt $attempt"
+                break
+              fi
+              echo "::warning::push attempt $attempt rejected; rebasing"
+              git pull --rebase origin main
+              [ $attempt -eq 3 ] && exit 1
+            done
+          fi
+          gh issue comment "$ISSUE_NUMBER" \
+            --body "Tier up! **$TIERS** — +${REWARD}¤ (balance: ${BALANCE}¤)." \
+            || true
+          gh issue edit "$ISSUE_NUMBER" --add-label "claimed" --remove-label "pending-arbiter" || true
+          gh issue lock "$ISSUE_NUMBER" --reason resolved || true
+          gh issue close "$ISSUE_NUMBER" --reason completed || true
+
+      - name: Claim rejected — comment + close
+        if: steps.claim.outputs.ok == 'false'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+          MESSAGE: ${{ steps.claim.outputs.message }}
+        run: |
+          gh issue comment "$ISSUE_NUMBER" \
+            --body "Tier claim rejected: $MESSAGE" \
+            || true
+          gh issue edit "$ISSUE_NUMBER" --add-label "rejected" --remove-label "pending-arbiter" || true
+          gh issue close "$ISSUE_NUMBER" --reason "not planned" || true
