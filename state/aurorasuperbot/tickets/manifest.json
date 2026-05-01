@@ -1,0 +1,202 @@
+{
+  "0": {
+    "card_id": "dashmouse",
+    "cost": 100,
+    "edition": "1st",
+    "index": 0,
+    "pack": "v1_alpha",
+    "rarity": "common",
+    "seed_hex": "e1501551307bf8c3e27cdd2e533f20964d7685d271f5f4cf8b3fe428a3aa56cc",
+    "serial": "5171d6ad-5d95-4662-99c7-b3a65523ae6f"
+  },
+  "1": {
+    "card_id": "plasma_hound",
+    "cost": 100,
+    "edition": "1st",
+    "index": 1,
+    "pack": "v1_alpha",
+    "rarity": "uncommon",
+    "seed_hex": "8041a0f3bb9b8baa8b59e26e29b0bdcd211b9f32d05fb0e6f8b2e0aa0b501bab",
+    "serial": "5a230bed-344a-4e95-a4a7-2f0beea04039"
+  },
+  "10": {
+    "card_id": "seapup",
+    "cost": 100,
+    "edition": "1st",
+    "index": 10,
+    "pack": "v1_alpha",
+    "rarity": "common",
+    "seed_hex": "4cca2fdaacf9d7633e1960057b9217ddf34586a47215be129ab9c880659346ab",
+    "serial": "69be9414-d407-4238-b0ad-66aadae89663"
+  },
+  "11": {
+    "card_id": "tide_synth",
+    "cost": 100,
+    "edition": "1st",
+    "index": 11,
+    "pack": "v1_alpha",
+    "rarity": "uncommon",
+    "seed_hex": "3f21fc14a18426fd9e6144046c20c00757108ba9590970d8158bc61c49ed19c1",
+    "serial": "d3b7a2e1-69e6-466e-baf8-87a6c175aad7"
+  },
+  "12": {
+    "card_id": "abysseel",
+    "cost": 100,
+    "edition": "1st",
+    "index": 12,
+    "pack": "v1_alpha",
+    "rarity": "uncommon",
+    "seed_hex": "040b7a8128c53c537f04a234dc920d471ed3489a88628541746c342089932193",
+    "serial": "57c86826-7266-4dc1-9a88-d2160cd99ee3"
+  },
+  "13": {
+    "card_id": "cindermote",
+    "cost": 100,
+    "edition": "1st",
+    "index": 13,
+    "pack": "v1_alpha",
+    "rarity": "common",
+    "seed_hex": "de87b6215d0eaf1da2d9e401b164a37a15f67e5c2aa8e9511c211f110e43f044",
+    "serial": "8189d595-7abc-4c89-99b2-c6d2060bdd33"
+  },
+  "14": {
+    "card_id": "shadowpup",
+    "cost": 100,
+    "edition": "1st",
+    "index": 14,
+    "pack": "v1_alpha",
+    "rarity": "common",
+    "seed_hex": "225f901a9ac93f8a38c286ce1b86dba13529e844a38c869921cb77867bb26e6a",
+    "serial": "680e5a53-20b1-4845-bd82-3ed6b8dd3ecf"
+  },
+  "15": {
+    "card_id": "abyss_warden",
+    "cost": 100,
+    "edition": "1st",
+    "index": 15,
+    "pack": "v1_alpha",
+    "rarity": "rare",
+    "seed_hex": "2ac2a7f449e2935fd4579fc91d1f7a12a4bb4bb4e03c2d95d454c181c78f9bde",
+    "serial": "7d7b51d5-5ea2-4e28-b3d3-a92ac574e629"
+  },
+  "16": {
+    "card_id": "bulwark_patriarch",
+    "cost": 100,
+    "edition": "1st",
+    "index": 16,
+    "pack": "v1_alpha",
+    "rarity": "epic",
+    "seed_hex": "088ee4b52befea10a92ea90c73409fdffe4850b30a383978d65eba458cc50d0c",
+    "serial": "d7670ffc-80be-46f2-9567-eb7bf7358b65"
+  },
+  "17": {
+    "card_id": "embershrew",
+    "cost": 100,
+    "edition": "1st",
+    "index": 17,
+    "pack": "v1_alpha",
+    "rarity": "common",
+    "seed_hex": "536bee372ef6cb9a88271b2de099c5ed0304dfc600911c334bc9b452e7a68168",
+    "serial": "b9fb4e63-675a-4869-8ef8-0b4317882c97"
+  },
+  "18": {
+    "card_id": "dewfin",
+    "cost": 100,
+    "edition": "1st",
+    "index": 18,
+    "pack": "v1_alpha",
+    "rarity": "common",
+    "seed_hex": "b30bc2597093a03ec3d9b1f51611ac05bd7678f40929d14b1efd76b3f7e595b2",
+    "serial": "8ea68b8e-2360-4981-a6f5-90a963591b10"
+  },
+  "19": {
+    "card_id": "thunderfly",
+    "cost": 100,
+    "edition": "1st",
+    "index": 19,
+    "pack": "v1_alpha",
+    "rarity": "common",
+    "seed_hex": "a6ba1745b1d1a6970d0843dafc4e631b28010f509cb92c53ca00becfc31e1f76",
+    "serial": "58ca6891-24db-421b-bad0-7b42e1259a19"
+  },
+  "2": {
+    "card_id": "charge_chick",
+    "cost": 100,
+    "edition": "1st",
+    "index": 2,
+    "pack": "v1_alpha",
+    "rarity": "common",
+    "seed_hex": "f4ed845a544508bd1057cb77402e38970903729456524f294d9487eafdeda627",
+    "serial": "8a59bfe9-84fc-4136-8753-1bbf16b41ee5"
+  },
+  "3": {
+    "card_id": "dirgebat",
+    "cost": 100,
+    "edition": "1st",
+    "index": 3,
+    "pack": "v1_alpha",
+    "rarity": "common",
+    "seed_hex": "5409b20f8a8566d36cdb637d8645c0621c206b363e363fb0c3bc10abe03b2838",
+    "serial": "85b659b3-f92a-4995-8c8c-c25701a7addd"
+  },
+  "4": {
+    "card_id": "duskmoth",
+    "cost": 100,
+    "edition": "1st",
+    "index": 4,
+    "pack": "v1_alpha",
+    "rarity": "common",
+    "seed_hex": "3bf7e605d703d6c438a59ab2dd256deeb158b2ca3056153182ec75c344954572",
+    "serial": "813cbf7a-0335-4fde-9937-559fd1f58c86"
+  },
+  "5": {
+    "card_id": "saltsprite",
+    "cost": 100,
+    "edition": "1st",
+    "index": 5,
+    "pack": "v1_alpha",
+    "rarity": "common",
+    "seed_hex": "788bdb72157e0a1dbec5f4c3602cb7a9180eea6602023139537776e427e33a75",
+    "serial": "14b5e772-6d74-410a-9b38-17cae152739a"
+  },
+  "6": {
+    "card_id": "ignis_kit",
+    "cost": 100,
+    "edition": "1st",
+    "index": 6,
+    "pack": "v1_alpha",
+    "rarity": "common",
+    "seed_hex": "96d453e777c81df885c040d2bd149a038ef76b1987bcde1e0cfee5266118a777",
+    "serial": "021f33a6-f7e5-417e-8c38-12d089079280"
+  },
+  "7": {
+    "card_id": "ignis_kit",
+    "cost": 100,
+    "edition": "1st",
+    "index": 7,
+    "pack": "v1_alpha",
+    "rarity": "common",
+    "seed_hex": "d9b4a79d90fd0f88c746b074efccf1dba57e5bae581825eee21b8bcc388cbfa8",
+    "serial": "280011db-d9f0-4ea5-8504-7ae195999f06"
+  },
+  "8": {
+    "card_id": "embershrew",
+    "cost": 100,
+    "edition": "1st",
+    "index": 8,
+    "pack": "v1_alpha",
+    "rarity": "common",
+    "seed_hex": "3502b22c5d9e35efed2eff8598a58d8f6991ddceef4e3296afd47ac3dfb375e7",
+    "serial": "e610547c-a787-40e3-9b78-197ee869ffdd"
+  },
+  "9": {
+    "card_id": "flarefly",
+    "cost": 100,
+    "edition": "1st",
+    "index": 9,
+    "pack": "v1_alpha",
+    "rarity": "common",
+    "seed_hex": "90248717c07c39032722189284f371897de02bd55f138ff0111ae9a43fe068fe",
+    "serial": "fde4315d-4a07-4dc8-9ed2-7d972007e784"
+  }
+}
