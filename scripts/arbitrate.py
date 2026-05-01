@@ -512,6 +512,96 @@ def update_leaderboard(arena_root: Path, result: ArbitrationResult) -> None:
 
 
 # ---------------------------------------------------------------------------
+# PvP balance rewards (Phase 4)
+# ---------------------------------------------------------------------------
+
+PVP_WIN_REWARD = 50
+PVP_LOSS_REWARD = 10
+DAILY_BONUS = 100
+
+
+def _pubkey_to_username(arena_root: Path, pubkey_hex: str) -> Optional[str]:
+    """Resolve a pubkey to a github_username via ``players/*.json``."""
+    players_dir = arena_root / "players"
+    if not players_dir.exists():
+        return None
+    pk = pubkey_hex.lower()
+    for pf in players_dir.glob("*.json"):
+        try:
+            data = json.loads(pf.read_text())
+            if data.get("pubkey_hex", "").lower() == pk:
+                return data.get("github_username", pf.stem)
+        except Exception:
+            continue
+    return None
+
+
+def _credit_balance(arena_root: Path, username: str, amount: int,
+                    reason: str) -> bool:
+    """Add ``amount`` to a player's balance. Returns True on success."""
+    balance_file = arena_root / "state" / username / "balance.json"
+    if not balance_file.exists():
+        return False
+    data = json.loads(balance_file.read_text())
+    data["balance"] = data.get("balance", 0) + amount
+    balance_file.write_text(json.dumps(data, indent=2))
+    return True
+
+
+def _apply_daily_bonus(arena_root: Path, username: str) -> bool:
+    """Apply the daily activity bonus if not already given today."""
+    balance_file = arena_root / "state" / username / "balance.json"
+    if not balance_file.exists():
+        return False
+    data = json.loads(balance_file.read_text())
+    today = dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%d")
+    if data.get("last_daily_bonus") == today:
+        return False
+    data["balance"] = data.get("balance", 0) + DAILY_BONUS
+    data["last_daily_bonus"] = today
+    balance_file.write_text(json.dumps(data, indent=2))
+    return True
+
+
+def apply_pvp_rewards(arena_root: Path, result: ArbitrationResult) -> Dict[str, Any]:
+    """Credit PvP balance rewards after a settled match.
+
+    Winner gets +50¤, loser gets +10¤ (participation). Draws award +10 each.
+    Also applies the daily activity bonus to both players.
+    """
+    if not result.ok:
+        return {"applied": False, "reason": "match not ok"}
+
+    rewards = {}
+    for pk in [result.challenger_pubkey, result.opponent_pubkey]:
+        username = _pubkey_to_username(arena_root, pk)
+        if username:
+            _apply_daily_bonus(arena_root, username)
+
+    if result.winner is not None:
+        winner_pk = result.challenger_pubkey if result.winner == 0 else result.opponent_pubkey
+        loser_pk = result.opponent_pubkey if result.winner == 0 else result.challenger_pubkey
+
+        w_user = _pubkey_to_username(arena_root, winner_pk)
+        l_user = _pubkey_to_username(arena_root, loser_pk)
+
+        if w_user:
+            _credit_balance(arena_root, w_user, PVP_WIN_REWARD, "pvp_win")
+            rewards[w_user] = PVP_WIN_REWARD
+        if l_user:
+            _credit_balance(arena_root, l_user, PVP_LOSS_REWARD, "pvp_loss")
+            rewards[l_user] = PVP_LOSS_REWARD
+    else:
+        for pk in [result.challenger_pubkey, result.opponent_pubkey]:
+            username = _pubkey_to_username(arena_root, pk)
+            if username:
+                _credit_balance(arena_root, username, PVP_LOSS_REWARD, "pvp_draw")
+                rewards[username] = PVP_LOSS_REWARD
+
+    return {"applied": True, "rewards": rewards}
+
+
+# ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
 
@@ -570,7 +660,10 @@ def main() -> int:
         arena = Path(args.arena_root)
         record_path = write_match_record(arena, result)
         update_leaderboard(arena, result)
+        reward_result = apply_pvp_rewards(arena, result)
         print(f"\nWritten: {record_path}", file=sys.stderr)
+        if reward_result.get("rewards"):
+            print(f"Rewards: {reward_result['rewards']}", file=sys.stderr)
 
     return 0 if result.ok else 1
 
@@ -688,7 +781,7 @@ signature: {sig_a}
         print(f"FAIL: tamper test should have caught cheating, got ok={result2.ok} "
               f"reason={result2.reason}")
         return 1
-    print(f"PASS: tamper detected → {result2.errors[0]}")
+    print(f"PASS: tamper detected -> {result2.errors[0]}")
     return 0
 
 

@@ -183,9 +183,22 @@ def process_pull_claim(
                 "message": f"no balance file for {username}"}
 
     balance_data = json.loads(balance_file.read_text())
+
+    # Apply daily activity bonus if not already given today
+    import datetime as dt
+    today = dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%d")
+    daily_applied = False
+    if balance_data.get("last_daily_bonus") != today:
+        balance_data["balance"] = balance_data.get("balance", 0) + 100
+        balance_data["last_daily_bonus"] = today
+        daily_applied = True
+
     balance = balance_data.get("balance", 0)
 
     if balance < cost:
+        # Write back the daily bonus even if the pull fails
+        if daily_applied:
+            balance_file.write_text(json.dumps(balance_data, indent=2))
         return {"ok": False, "error": "insufficient_balance",
                 "message": f"balance {balance} < cost {cost}"}
 
@@ -269,11 +282,12 @@ protocol: {PROTOCOL_VERSION_PULL_CLAIM}"""
         r = process_pull_claim(42, "alice", body, root)
         assert r["ok"], f"expected ok, got {r}"
         assert r["card_id"] == "flame_imp"
-        assert r["balance_after"] == 200
+        # 300 initial + 100 daily bonus - 100 cost = 300
+        assert r["balance_after"] == 300, f"expected 300, got {r['balance_after']}"
 
         # Verify state was updated
         bal = json.loads((state / "balance.json").read_text())
-        assert bal["balance"] == 200
+        assert bal["balance"] == 300
         col = json.loads((state / "collection.json").read_text())
         assert "s-001" in col["serials"]
         pend = json.loads((state / "tickets" / "pending.json").read_text())
