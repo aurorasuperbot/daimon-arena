@@ -39,7 +39,7 @@ jobs:
             exit 1
           fi
           git config --global url."https://x-access-token:${ENGINE_READ_TOKEN}@github.com/".insteadOf "https://github.com/"
-          pip install "git+https://github.com/aurorasuperbot/daimon.git@v2.2.0"
+          pip install "git+https://github.com/aurorasuperbot/daimon.git@v2.3.0"
           git config --global --unset url."https://x-access-token:${ENGINE_READ_TOKEN}@github.com/".insteadOf
 
       - name: Self-test
