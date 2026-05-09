@@ -14,7 +14,7 @@ name: Trade Settler
 #      ownership, then atomically transfers serials between collections.
 #
 # Cross-repo engine pull mirrors arbiter.yml — uses ENGINE_READ_TOKEN to
-# install the engine from git@v0.2.0. Falls back to self-test only if
+# install the engine from git@v2.5.0. Falls back to self-test only if
 # the secret is missing.
 
 on:
@@ -29,6 +29,10 @@ on:
 permissions:
   contents: write
   issues:   write
+
+concurrency:
+  group: trade-${{ github.event.issue.number || inputs.issue_number }}
+  cancel-in-progress: false
 
 jobs:
   settle:

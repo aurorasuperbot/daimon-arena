@@ -108,19 +108,20 @@ def _count_pvp_matches_today(arena_root: Path, username: str,
 def _count_pulls_today(arena_root: Path, username: str, date_str: str) -> int:
     """Count successful pull claims for a player on a given date.
 
-    Uses the collection's card_ids length minus previous day's count.
-    Simplified: checks the ticket manifest for claims on this date.
+    Reads state/{username}/pull_claims.json and counts entries whose
+    ``date`` field matches *date_str* (YYYY-MM-DD).
     """
     state_dir = arena_root / "state" / username
-    tickets_file = state_dir / "tickets" / "pending.json"
-    manifest_file = state_dir / "tickets" / "manifest.json"
+    pull_claims_file = state_dir / "pull_claims.json"
 
-    if not tickets_file.exists() or not manifest_file.exists():
+    if not pull_claims_file.exists():
         return 0
 
-    pending = json.loads(tickets_file.read_text())
-    next_idx = pending.get("next_claim_index", 0)
-    return next_idx
+    pull_claims = json.loads(pull_claims_file.read_text())
+    return sum(
+        1 for c in pull_claims.get("claims", [])
+        if c.get("date") == date_str
+    )
 
 
 def _verify_quest_completion(arena_root: Path, username: str,

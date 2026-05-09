@@ -13,7 +13,7 @@ name: Mining Audit
 #
 # Cross-repo engine pull mirrors arbiter.yml — uses ENGINE_READ_TOKEN
 # (a fine-grained PAT scoped to repo:read on aurorasuperbot/daimon)
-# to install the engine from git@v0.2.0. Falls back to self-test only
+# to install the engine from git@v2.5.0. Falls back to self-test only
 # if the secret is missing.
 
 on:

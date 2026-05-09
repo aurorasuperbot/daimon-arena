@@ -171,7 +171,7 @@ def process_registration(
 
     collection_file = state_dir / "collection.json"
     if not collection_file.exists():
-        collection_file.write_text(json.dumps({"serials": []}, indent=2))
+        collection_file.write_text(json.dumps({"serials": [], "card_ids": []}, indent=2))
 
     tickets_dir = state_dir / "tickets"
     tickets_dir.mkdir(exist_ok=True)

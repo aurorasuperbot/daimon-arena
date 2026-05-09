@@ -95,7 +95,11 @@ def process_migration(
 
     username = kv["github_username"].strip()
     pubkey_hex = kv["pubkey_hex"].strip().lower()
-    balance = int(kv["balance"].strip())
+    try:
+        balance = int(kv["balance"].strip())
+    except ValueError:
+        return {"ok": False, "error": "invalid_balance",
+                "message": f"balance is not a valid integer: {kv['balance'].strip()!r}"}
     collection_hash = kv["collection_hash"].strip().lower()
     migrated_at = kv["migrated_at"].strip()
     signature = kv["signature"].strip().lower()

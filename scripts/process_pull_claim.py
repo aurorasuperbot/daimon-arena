@@ -84,7 +84,11 @@ def process_pull_claim(
 
     username = kv["github_username"].strip()
     pubkey_hex = kv["pubkey_hex"].strip().lower()
-    ticket_index = int(kv["ticket_index"].strip())
+    try:
+        ticket_index = int(kv["ticket_index"].strip())
+    except ValueError:
+        return {"ok": False, "error": "invalid_ticket_index",
+                "message": f"ticket_index is not a valid integer: {kv['ticket_index'].strip()!r}"}
     claimed_at = kv["claimed_at"].strip()
     signature = kv["signature"].strip().lower()
     protocol = kv["protocol"].strip()
@@ -218,6 +222,20 @@ def process_pull_claim(
     # 3. Increment next_claim_index
     pending["next_claim_index"] = next_idx + 1
     tickets_file.write_text(json.dumps(pending, indent=2, sort_keys=True))
+
+    # 4. Record pull claim with date for quest verification
+    pull_claims_file = state_dir / "pull_claims.json"
+    pull_claims = json.loads(pull_claims_file.read_text()) if pull_claims_file.exists() else {"claims": []}
+    pull_claims["claims"].append({
+        "ticket_index": ticket_index,
+        "card_id": card_id,
+        "serial": serial,
+        "cost": cost,
+        "claimed_at": claimed_at,
+        "date": today,
+        "issue_number": issue_number,
+    })
+    pull_claims_file.write_text(json.dumps(pull_claims, indent=2))
 
     return {
         "ok": True,
