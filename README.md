@@ -44,4 +44,4 @@ If anyone could write to `main`, the audit trail would be untrusted. By forcing 
 
 ## Status
 
-V0.1 alpha. Arena infrastructure is scaffolded but the arbiter workflows are skeletons — they validate Issue structure but don't yet run engine resolution. Full PvP arbitration lands in V1.1.
+V2.5.0. All 9 arbiter workflows are live — registration, PvP arbitration with balance rewards, pull/quest/tier claims, migration, mining audit, ticket generation, and trade settlement. Engine is pinned to [`v2.5.0`](https://github.com/aurorasuperbot/daimon/releases/tag/v2.5.0).
